@@ -1,0 +1,121 @@
+package com.chikecan.backend.service;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
+import com.chikecan.backend.dto.TicketCreateRequest;
+import com.chikecan.backend.dto.TicketResponse;
+import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.entity.Role;
+import com.chikecan.backend.entity.Ticket;
+import com.chikecan.backend.entity.TicketStatus;
+import com.chikecan.backend.entity.User;
+import com.chikecan.backend.exception.InvalidAssigneeException;
+import com.chikecan.backend.exception.InvalidStatusTransitionException;
+import com.chikecan.backend.exception.TicketNotFoundException;
+import com.chikecan.backend.repository.TicketRepository;
+import com.chikecan.backend.repository.UserRepository;
+import com.chikecan.backend.security.AppUserDetails;
+
+@Service
+public class TicketService {
+
+  private static final Map<TicketStatus, Set<TicketStatus>> ALLOWED_TRANSITIONS = Map.of(
+      TicketStatus.OPEN, Set.of(TicketStatus.IN_PROGRESS),
+      TicketStatus.IN_PROGRESS, Set.of(TicketStatus.RESOLVED),
+      TicketStatus.RESOLVED, Set.of(TicketStatus.CLOSED, TicketStatus.IN_PROGRESS),
+      TicketStatus.CLOSED, Set.of());
+
+  private final TicketRepository ticketRepository;
+  private final UserRepository userRepository;
+
+  public TicketService(TicketRepository ticketRepository, UserRepository userRepository) {
+    this.ticketRepository = ticketRepository;
+    this.userRepository = userRepository;
+  }
+
+  @Transactional
+  public TicketResponse create(TicketCreateRequest request, AppUserDetails principal) {
+    Ticket ticket = new Ticket(
+        request.getTitle(), request.getDescription(), TicketStatus.OPEN, request.getPriority(),
+        principal.getId(), null);
+    return new TicketResponse(ticketRepository.save(ticket));
+  }
+
+  @Transactional(readOnly = true)
+  public List<TicketResponse> list(AppUserDetails principal) {
+    List<Ticket> tickets = switch (principal.getRole()) {
+      case USER -> ticketRepository.findByRequesterIdOrderByCreatedAtDesc(principal.getId());
+      case AGENT -> ticketRepository.findByAssigneeIdOrderByCreatedAtDesc(principal.getId());
+      case ADMIN -> ticketRepository.findAllByOrderByCreatedAtDesc();
+    };
+    return tickets.stream().map(TicketResponse::new).toList();
+  }
+
+  @Transactional(readOnly = true)
+  public TicketResponse getDetail(Long id, AppUserDetails principal) {
+    return new TicketResponse(findAccessible(id, principal));
+  }
+
+  @Transactional
+  public TicketResponse updateStatus(Long id, TicketStatusUpdateRequest request, AppUserDetails principal) {
+    Ticket ticket = findAccessibleForStatusChange(id, principal);
+    TicketStatus next = request.getStatus();
+    if (!isAllowedTransition(ticket.getStatus(), next)) {
+      throw new InvalidStatusTransitionException("このステータスへは変更できません");
+    }
+    ticket.setStatus(next);
+    return new TicketResponse(ticket);
+  }
+
+  @Transactional
+  public TicketResponse updateAssignee(Long id, TicketAssigneeUpdateRequest request, AppUserDetails principal) {
+    if (principal.getRole() != Role.ADMIN) {
+      throw new AccessDeniedException("権限がありません");
+    }
+
+    Ticket ticket = ticketRepository.findById(id).orElseThrow(this::notFound);
+    Long assigneeId = request.getAssigneeId();
+
+    if (assigneeId != null) {
+      User assignee = userRepository.findById(assigneeId)
+          .orElseThrow(() -> new InvalidAssigneeException("担当者が見つかりません"));
+      if (assignee.getRole() != Role.AGENT) {
+        throw new InvalidAssigneeException("担当者にはAGENTのみ設定できます");
+      }
+    }
+
+    ticket.setAssigneeId(assigneeId);
+    return new TicketResponse(ticket);
+  }
+
+  private Ticket findAccessible(Long id, AppUserDetails principal) {
+    return switch (principal.getRole()) {
+      case USER -> ticketRepository.findByIdAndRequesterId(id, principal.getId()).orElseThrow(this::notFound);
+      case AGENT -> ticketRepository.findByIdAndAssigneeId(id, principal.getId()).orElseThrow(this::notFound);
+      case ADMIN -> ticketRepository.findById(id).orElseThrow(this::notFound);
+    };
+  }
+
+  private Ticket findAccessibleForStatusChange(Long id, AppUserDetails principal) {
+    return switch (principal.getRole()) {
+      case AGENT -> ticketRepository.findByIdAndAssigneeId(id, principal.getId()).orElseThrow(this::notFound);
+      case ADMIN -> ticketRepository.findById(id).orElseThrow(this::notFound);
+      case USER -> throw new AccessDeniedException("権限がありません");
+    };
+  }
+
+  private boolean isAllowedTransition(TicketStatus current, TicketStatus next) {
+    return ALLOWED_TRANSITIONS.getOrDefault(current, Set.of()).contains(next);
+  }
+
+  private TicketNotFoundException notFound() {
+    return new TicketNotFoundException("チケットが見つかりません");
+  }
+}
