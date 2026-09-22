@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
+import com.chikecan.backend.security.AppUserDetails;
 
 public class UserResponse {
 
@@ -21,6 +22,15 @@ public class UserResponse {
     this.role = user.getRole();
     this.enabled = user.isEnabled();
     this.createdAt = user.getCreatedAt();
+  }
+
+  public UserResponse(AppUserDetails principal) {
+    this.id = principal.getId();
+    this.name = principal.getName();
+    this.email = principal.getUsername();
+    this.role = principal.getRole();
+    this.enabled = principal.isEnabled();
+    this.createdAt = principal.getCreatedAt();
   }
 
   public Long getId() {
