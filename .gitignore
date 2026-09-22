@@ -1,0 +1,18 @@
+# VSCodeの個人環境設定
+.vscode/settings.json
+
+# Node.js
+**/node_modules/
+**/dist/
+
+# 環境変数・秘密情報
+.env
+.env.*
+!.env.example
+
+# ログ
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
