@@ -1,6 +1,8 @@
 import type { ErrorResponse } from '../types/auth';
 
-const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
+// 開発環境は.env.developmentのVITE_API_BASE_URLで別Origin(localhost:8080)へ接続する。
+// 本番ビルドはこの環境変数を設定しないため空文字にフォールバックし、相対URL(同一Origin)で呼び出す。
+const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // CSRF検証が必要なのは状態変更を伴うメソッドのみ。
 // GET・HEAD・OPTIONSにはCSRFヘッダーを付与しない。

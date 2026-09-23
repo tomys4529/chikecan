@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/target
+**/.git
+.git
+**/.vscode
+**/.idea
+*.log
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+chikekan_requirements_design_sample.pdf
