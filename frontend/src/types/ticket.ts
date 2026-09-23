@@ -22,3 +22,7 @@ export interface TicketCreateRequest {
 export interface TicketStatusUpdateRequest {
   status: TicketStatus;
 }
+
+export interface TicketAssigneeUpdateRequest {
+  assigneeId: number | null;
+}

@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { ProtectedRoute } from '../routes/ProtectedRoute';
 import { TicketDetailPage } from './TicketDetailPage';
-import { csrfResponse, errorResponse, jsonResponse, testUser } from '../test-utils/apiMocks';
+import { agentSummary, csrfResponse, errorResponse, jsonResponse, testUser } from '../test-utils/apiMocks';
 import type { TicketResponse } from '../types/ticket';
 
 function renderDetailPage(path: string, fetchImpl: typeof fetch) {
@@ -55,6 +55,7 @@ describe('TicketDetailPage', () => {
       if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
       if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
       if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+      if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
       throw new Error(`unexpected fetch: ${url}`);
     });
 
@@ -170,6 +171,7 @@ describe('TicketDetailPage', () => {
       const method = (init && (init as RequestInit).method) ?? 'GET';
       if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
       if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+      if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
       if (url.endsWith('/api/tickets/7/status') && method === 'PATCH') {
         return Promise.resolve(errorResponse(409, 'このステータスへは変更できません', '/api/tickets/7/status'));
       }
@@ -192,6 +194,7 @@ describe('TicketDetailPage', () => {
       const method = (init && (init as RequestInit).method) ?? 'GET';
       if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
       if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+      if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
       if (url.endsWith('/api/tickets/7/status') && method === 'PATCH') {
         patchCalls += 1;
         return new Promise<Response>((resolve) => {
@@ -225,5 +228,327 @@ describe('TicketDetailPage', () => {
     });
 
     await waitFor(() => expect(screen.getByText('ログイン画面')).toBeInTheDocument());
+  });
+
+  describe('担当者設定(ADMIN)', () => {
+    it('ADMINには担当者設定フォームが表示されAGENT候補がselectの選択肢になる', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        if (url.endsWith('/api/admin/agents')) {
+          return Promise.resolve(jsonResponse([agentSummary({ id: 3, name: '鈴木一郎', email: 'suzuki@example.com' })]));
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
+      const optionLabels = Array.from(select.options).map((option) => option.textContent);
+      expect(optionLabels).toEqual(['未割り当て', '鈴木一郎(suzuki@example.com)']);
+    });
+
+    it.each(['USER', 'AGENT'] as const)('%sには担当者設定フォームが表示されずAGENT一覧も取得されない', async (role) => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+        if (url.endsWith('/api/admin/agents')) throw new Error('AGENT一覧は呼ばれないはず');
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.queryByLabelText('担当者設定')).not.toBeInTheDocument();
+    });
+
+    it('現在の担当者がselectの初期値として選択されている', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 4 })));
+        if (url.endsWith('/api/admin/agents')) {
+          return Promise.resolve(jsonResponse([agentSummary({ id: 4, name: '担当花子', email: 'hanako@example.com' })]));
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
+      await waitFor(() => expect(select.value).toBe('4'));
+    });
+
+    it('未割り当てを選択して送信するとassigneeId:nullで送信され担当者表示が更新される(再GETしない)', async () => {
+      let getCalls = 0;
+      let patchCalls = 0;
+      let patchBody: string | undefined;
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          patchCalls += 1;
+          patchBody = (init as RequestInit).body as string;
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          getCalls += 1;
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 2 })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      const select = await screen.findByLabelText('担当者設定');
+      expect(getCalls).toBe(1);
+
+      await user.selectOptions(select, '');
+      await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
+
+      await waitFor(() => expect(patchCalls).toBe(1));
+      expect(patchBody).toBe(JSON.stringify({ assigneeId: null }));
+      expect(getCalls).toBe(1);
+    });
+
+    it('AGENTを選択して送信すると正しいIDで送信され担当者表示が更新される', async () => {
+      let patchBody: string | undefined;
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) {
+          return Promise.resolve(jsonResponse([agentSummary({ id: 9, name: '鈴木一郎', email: 'suzuki@example.com' })]));
+        }
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          patchBody = (init as RequestInit).body as string;
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 9 })));
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.selectOptions(await screen.findByLabelText('担当者設定'), '9');
+      await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
+
+      await waitFor(() => expect(patchBody).toBe(JSON.stringify({ assigneeId: 9 })));
+    });
+
+    it('担当者更新の404はErrorMessageで表示される', async () => {
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          return Promise.resolve(errorResponse(404, 'チケットが見つかりません', '/api/tickets/7/assignee'));
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.selectOptions(await screen.findByLabelText('担当者設定'), '2');
+      await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('チケットが見つかりません');
+    });
+
+    it('担当者更新が401の場合は認証状態を破棄しログイン画面へ遷移する', async () => {
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          return Promise.resolve(errorResponse(401, '認証が必要です', '/api/tickets/7/assignee'));
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.selectOptions(await screen.findByLabelText('担当者設定'), '2');
+      await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
+
+      await waitFor(() => expect(screen.getByText('ログイン画面')).toBeInTheDocument());
+    });
+
+    it('担当者更新中に連続submitしてもPATCHは1回しか発行されない', async () => {
+      let patchCalls = 0;
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          patchCalls += 1;
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(jsonResponse(ticketResponse({ assigneeId: 2 }))), 30);
+          });
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.selectOptions(await screen.findByLabelText('担当者設定'), '2');
+
+      const form = screen.getByRole('button', { name: '担当者を更新する' }).closest('form');
+      if (!form) throw new Error('form not found');
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+
+      await waitFor(() => expect(patchCalls).toBe(1));
+    });
+
+    it('AGENT一覧の取得に失敗してもページ全体はクラッシュせずエラー表示と操作不可に留まる', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        if (url.endsWith('/api/admin/agents')) {
+          return Promise.resolve(errorResponse(500, 'サーバー内部でエラーが発生しました', '/api/admin/agents'));
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      expect(await screen.findByRole('alert')).toHaveTextContent('サーバー内部でエラーが発生しました');
+      const select = screen.getByLabelText('担当者設定') as HTMLSelectElement;
+      expect(select).toBeDisabled();
+    });
+
+    it('現在の担当者がAGENT候補一覧に存在しない場合、選択不可のoptionで現状を示す', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 99 })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
+      await waitFor(() => expect(select.value).toBe('99'));
+      const missingOption = Array.from(select.options).find((option) => option.value === '99');
+      expect(missingOption).toBeDefined();
+      expect(missingOption?.disabled).toBe(true);
+      expect(missingOption?.textContent).toContain('選択不可');
+    });
+
+    it('現在の担当者が候補一覧に存在しないだけでは担当解除PATCHは自動送信されない', async () => {
+      let patchCalls = 0;
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 99 })));
+        }
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        if (url.endsWith('/api/tickets/7/assignee')) {
+          patchCalls += 1;
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      await screen.findByLabelText('担当者設定');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(patchCalls).toBe(0);
+    });
+
+    it('担当者を変更していない場合、更新ボタンはdisabledでPATCHされない', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 2 })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([agentSummary({ id: 2 })]));
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      await screen.findByLabelText('担当者設定');
+      const button = await screen.findByRole('button', { name: '担当者を更新する' });
+      await waitFor(() => expect(button).toBeDisabled());
+    });
+
+    it('AGENT一覧読み込み中はselectとボタンが操作できない', async () => {
+      let resolveAgents: (value: Response) => void = () => {};
+      const agentsPromise = new Promise<Response>((resolve) => {
+        resolveAgents = resolve;
+      });
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        if (url.endsWith('/api/admin/agents')) return agentsPromise;
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
+      expect(select).toBeDisabled();
+      expect(screen.getByRole('button', { name: '担当者を更新する' })).toBeDisabled();
+
+      resolveAgents(jsonResponse([agentSummary({ id: 2 })]));
+      await waitFor(() => expect(select).not.toBeDisabled());
+    });
+
+    it('AGENT候補が0件でも明示的な担当解除ができる', async () => {
+      let patchBody: string | undefined;
+      renderDetailPage('/tickets/7', (input, init) => {
+        const url = String(input);
+        const method = (init && (init as RequestInit).method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
+        if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
+          patchBody = (init as RequestInit).body as string;
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
+        }
+        if (url.endsWith('/api/tickets/7') && method === 'GET') {
+          return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 2 })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      });
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
+      await waitFor(() => expect(select).not.toBeDisabled());
+      await user.selectOptions(select, '');
+      await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
+
+      await waitFor(() => expect(patchBody).toBe(JSON.stringify({ assigneeId: null })));
+    });
   });
 });

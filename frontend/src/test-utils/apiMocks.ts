@@ -1,4 +1,5 @@
 import type { UserResponse } from '../types/auth';
+import type { AgentSummaryResponse } from '../types/admin';
 
 export function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -25,4 +26,13 @@ export function testUser(overrides: Partial<UserResponse> = {}): UserResponse {
 
 export function csrfResponse(): Response {
   return jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' });
+}
+
+export function agentSummary(overrides: Partial<AgentSummaryResponse> = {}): AgentSummaryResponse {
+  return {
+    id: 2,
+    name: '担当太郎',
+    email: 'agent@example.com',
+    ...overrides,
+  };
 }
