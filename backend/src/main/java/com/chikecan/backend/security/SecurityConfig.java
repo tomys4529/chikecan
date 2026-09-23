@@ -57,7 +57,11 @@ public class SecurityConfig {
             .permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/agent/**").hasAnyRole("AGENT", "ADMIN")
-            .anyRequest().authenticated())
+            .requestMatchers("/api/**").authenticated()
+            // /api/**以外(静的ファイル・Reactのクライアントサイドルート)は公開する。
+            // 実データはすべてAPI経由でのみ取得されるため、ここをpermitAllにしても
+            // 認可境界(/api/**)は一切弱まらない。
+            .anyRequest().permitAll())
         .csrf(csrf -> csrf
             .csrfTokenRepository(csrfTokenRepository)
             .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))

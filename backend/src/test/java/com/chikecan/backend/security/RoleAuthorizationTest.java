@@ -199,4 +199,29 @@ class RoleAuthorizationTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.email").value(USER_EMAIL));
   }
+
+  // ===== 静的ファイル・SPAルートの公開(SecurityConfig回帰) =====
+
+  @Test
+  void 未認証でルートパスへアクセスできる() throws Exception {
+    mockMvc.perform(get("/"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void 未認証でReactのクライアントサイドルートへアクセスできる() throws Exception {
+    // /tickets/1は実ファイルではなく、SpaWebConfigによりindex.htmlへフォールバックされる。
+    // Reactのルーティング自体は画面側の認可(ProtectedRoute)が担うため、
+    // ここでは静的ファイル配信レベルで200になることだけを確認する。
+    mockMvc.perform(get("/tickets/1"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void 保護対象のAPIは静的ファイル公開後も未認証では401のままである() throws Exception {
+    mockMvc.perform(get("/api/tickets"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value(401));
+  }
 }
