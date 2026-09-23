@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTicket, getTicket, listTickets, updateTicketStatus } from './tickets';
+import { createTicket, getTicket, listTickets, updateTicketAssignee, updateTicketStatus } from './tickets';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -66,5 +66,31 @@ describe('api/tickets', () => {
     expect(String(url)).toContain('/api/tickets/3/status');
     expect((init as RequestInit).method).toBe('PATCH');
     expect((init as RequestInit).body).toBe(JSON.stringify({ status: 'IN_PROGRESS' }));
+  });
+
+  it('updateTicketAssigneeはPATCH /api/tickets/{id}/assigneeを呼ぶ', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: 2, createdAt: '', updatedAt: '' }),
+    );
+
+    await updateTicketAssignee(3, { assigneeId: 2 });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/tickets/3/assignee');
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect((init as RequestInit).body).toBe(JSON.stringify({ assigneeId: 2 }));
+  });
+
+  it('updateTicketAssigneeはassigneeId:nullで担当解除を送信できる', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }),
+    );
+
+    await updateTicketAssignee(3, { assigneeId: null });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as RequestInit).body).toBe(JSON.stringify({ assigneeId: null }));
   });
 });
