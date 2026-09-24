@@ -15,7 +15,7 @@ export function Header() {
   return (
     <header className="app-header">
       <Link to="/" className="app-header__brand">
-        チケカン
+        chikecan
       </Link>
       {status === 'authenticated' && user && (
         <span className="app-header__user">

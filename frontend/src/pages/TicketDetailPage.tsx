@@ -208,10 +208,10 @@ export function TicketDetailPage() {
           <dd>
             <TicketPriorityBadge priority={ticket.priority} />
           </dd>
-          <dt>依頼者ID</dt>
-          <dd>{ticket.requesterId}</dd>
+          <dt>依頼者</dt>
+          <dd>{ticket.requesterName}</dd>
           <dt>担当者</dt>
-          <dd>{ticket.assigneeId ?? '未割り当て'}</dd>
+          <dd>{ticket.assigneeName ?? '未割り当て'}</dd>
           <dt>更新日時</dt>
           <dd>{ticket.updatedAt}</dd>
         </dl>
