@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -48,6 +50,33 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ErrorResponse> handleNotFound(NoResourceFoundException ex, HttpServletRequest request) {
     return build(HttpStatus.NOT_FOUND, "指定されたリソースが見つかりません", request);
+  }
+
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ErrorResponse> handleMessageNotReadable(HttpMessageNotReadableException ex,
+      HttpServletRequest request) {
+    return build(HttpStatus.BAD_REQUEST, "リクエストの形式が正しくありません", request);
+  }
+
+  @ExceptionHandler(AccessDeniedException.class)
+  public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+    return build(HttpStatus.FORBIDDEN, "権限がありません", request);
+  }
+
+  @ExceptionHandler(TicketNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleTicketNotFound(TicketNotFoundException ex, HttpServletRequest request) {
+    return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
+  }
+
+  @ExceptionHandler(InvalidAssigneeException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidAssignee(InvalidAssigneeException ex, HttpServletRequest request) {
+    return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+  }
+
+  @ExceptionHandler(InvalidStatusTransitionException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidStatusTransition(InvalidStatusTransitionException ex,
+      HttpServletRequest request) {
+    return build(HttpStatus.CONFLICT, ex.getMessage(), request);
   }
 
   @ExceptionHandler(DataIntegrityViolationException.class)

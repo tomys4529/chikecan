@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.UserResponse;
 import com.chikecan.backend.entity.Role;
@@ -76,5 +79,32 @@ class UserServiceTest {
         .isInstanceOf(DuplicateEmailException.class);
 
     verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void listAgentsはRepositoryの結果をid名前メールアドレスのみのDTOへ変換する() {
+    userService = new UserService(userRepository, passwordEncoder);
+
+    User agent = new User("鈴木一郎", "suzuki@example.com", "hashed-password", Role.AGENT, true);
+    ReflectionTestUtils.setField(agent, "id", 5L);
+    when(userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT)).thenReturn(List.of(agent));
+
+    List<AgentSummaryResponse> result = userService.listAgents();
+
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).getId()).isEqualTo(5L);
+    assertThat(result.get(0).getName()).isEqualTo("鈴木一郎");
+    assertThat(result.get(0).getEmail()).isEqualTo("suzuki@example.com");
+  }
+
+  @Test
+  void listAgentsは候補が存在しない場合は空リストを返す() {
+    userService = new UserService(userRepository, passwordEncoder);
+
+    when(userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT)).thenReturn(List.of());
+
+    List<AgentSummaryResponse> result = userService.listAgents();
+
+    assertThat(result).isEmpty();
   }
 }

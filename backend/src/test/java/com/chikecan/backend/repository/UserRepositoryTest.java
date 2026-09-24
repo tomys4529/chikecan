@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -69,5 +70,40 @@ class UserRepositoryTest {
       assertThat(saved.getCreatedAt()).isNotNull();
       assertThat(saved.getUpdatedAt()).isNotNull();
     });
+  }
+
+  @Test
+  void 有効なAGENTだけがfindByRoleAndEnabledTrueOrderByNameAscIdAscで取得できる() {
+    userRepository.saveAndFlush(new User("有効AGENT", "agent-enabled@example.com", "hash", Role.AGENT, true));
+    userRepository.saveAndFlush(new User("無効AGENT", "agent-disabled@example.com", "hash", Role.AGENT, false));
+    userRepository.saveAndFlush(new User("有効USER", "user-enabled@example.com", "hash", Role.USER, true));
+    userRepository.saveAndFlush(new User("有効ADMIN", "admin-enabled@example.com", "hash", Role.ADMIN, true));
+
+    List<User> result = userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT);
+
+    assertThat(result).extracting(User::getEmail).containsExactly("agent-enabled@example.com");
+  }
+
+  @Test
+  void AGENT候補は氏名昇順で同名の場合はID昇順で返る() {
+    User first = userRepository.saveAndFlush(new User("同名AGENT", "agent-a@example.com", "hash", Role.AGENT, true));
+    User second = userRepository.saveAndFlush(new User("同名AGENT", "agent-b@example.com", "hash", Role.AGENT, true));
+    userRepository.saveAndFlush(new User("あ行AGENT", "agent-c@example.com", "hash", Role.AGENT, true));
+
+    List<User> result = userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT);
+
+    assertThat(result).extracting(User::getEmail)
+        .containsExactly("agent-c@example.com", "agent-a@example.com", "agent-b@example.com");
+    assertThat(result.get(1).getId()).isLessThan(result.get(2).getId());
+    assertThat(first.getId()).isLessThan(second.getId());
+  }
+
+  @Test
+  void AGENT候補が存在しない場合は空リストになる() {
+    userRepository.saveAndFlush(new User("有効USER", "user-only@example.com", "hash", Role.USER, true));
+
+    List<User> result = userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT);
+
+    assertThat(result).isEmpty();
   }
 }

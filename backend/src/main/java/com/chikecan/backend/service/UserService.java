@@ -1,11 +1,14 @@
 package com.chikecan.backend.service;
 
+import java.util.List;
 import java.util.Locale;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.UserResponse;
 import com.chikecan.backend.entity.Role;
@@ -37,5 +40,19 @@ public class UserService {
     User saved = userRepository.save(user);
 
     return new UserResponse(saved);
+  }
+
+  /**
+   * ADMINがチケットへ割り当て可能なAGENT候補一覧を取得する。
+   * URL側の/api/admin/**制限・Controllerの@PreAuthorizeに加え、
+   * Service自身にも@PreAuthorizeを付与し、将来Controller以外から
+   * 呼び出されるようになった場合でもADMIN以外は取得できないようにする。
+   */
+  @PreAuthorize("hasRole('ADMIN')")
+  @Transactional(readOnly = true)
+  public List<AgentSummaryResponse> listAgents() {
+    return userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT).stream()
+        .map(AgentSummaryResponse::new)
+        .toList();
   }
 }
