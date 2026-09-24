@@ -125,7 +125,9 @@ class TicketControllerTest {
             .content(body))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.requesterId").value(userId))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
         .andExpect(jsonPath("$.assigneeId").value(nullValue()))
+        .andExpect(jsonPath("$.assigneeName").value(nullValue()))
         .andExpect(jsonPath("$.status").value("OPEN"));
   }
 
@@ -249,6 +251,36 @@ class TicketControllerTest {
   }
 
   @Test
+  void 一覧レスポンスに依頼者名と担当者名が含まれる() throws Exception {
+    Ticket assigned = createTicket(userId, agentId, TicketStatus.OPEN);
+    Ticket unassigned = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+
+    MvcResult result = mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andReturn();
+
+    tools.jackson.databind.JsonNode array = new tools.jackson.databind.ObjectMapper()
+        .readTree(result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+    tools.jackson.databind.JsonNode assignedNode = findById(array, assigned.getId());
+    tools.jackson.databind.JsonNode unassignedNode = findById(array, unassigned.getId());
+
+    assertThat(assignedNode.get("requesterName").asText()).isEqualTo("チケットUSER");
+    assertThat(assignedNode.get("assigneeName").asText()).isEqualTo("チケットAGENT");
+    assertThat(unassignedNode.get("requesterName").asText()).isEqualTo("チケットUSER");
+    assertThat(unassignedNode.get("assigneeName").isNull()).isTrue();
+  }
+
+  private tools.jackson.databind.JsonNode findById(tools.jackson.databind.JsonNode array, Long id) {
+    for (tools.jackson.databind.JsonNode node : array) {
+      if (node.get("id").asLong() == id) {
+        return node;
+      }
+    }
+    throw new AssertionError("id=" + id + "の要素が見つかりません");
+  }
+
+  @Test
   void 一覧はcreatedAt降順で返る() throws Exception {
     Ticket first = createTicket(userId, null, TicketStatus.OPEN);
     Thread.sleep(10);
@@ -310,6 +342,17 @@ class TicketControllerTest {
   }
 
   @Test
+  void チケット詳細レスポンスに依頼者名と担当者名が含まれる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+
+    mockMvc.perform(get("/api/tickets/" + ticket.getId()).session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
+  }
+
+  @Test
   void 存在しないIDも同じ404になる() throws Exception {
     MockHttpSession session = loginAs(USER_EMAIL);
 
@@ -342,7 +385,9 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"status\":\"IN_PROGRESS\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+        .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
@@ -457,7 +502,9 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"assigneeId\":" + agentId + "}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.assigneeId").value(agentId));
+        .andExpect(jsonPath("$.assigneeId").value(agentId))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getAssigneeId()).isEqualTo(agentId);
@@ -524,7 +571,8 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"assigneeId\":null}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.assigneeId").value(nullValue()));
+        .andExpect(jsonPath("$.assigneeId").value(nullValue()))
+        .andExpect(jsonPath("$.assigneeName").value(nullValue()));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getAssigneeId()).isNull();

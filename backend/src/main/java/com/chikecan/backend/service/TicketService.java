@@ -1,8 +1,10 @@
 package com.chikecan.backend.service;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -45,7 +47,9 @@ public class TicketService {
     Ticket ticket = new Ticket(
         request.getTitle(), request.getDescription(), TicketStatus.OPEN, request.getPriority(),
         principal.getId(), null);
-    return new TicketResponse(ticketRepository.save(ticket));
+    Ticket saved = ticketRepository.save(ticket);
+    // requesterは常にログイン中の本人(principal)なので、名前解決のための追加クエリは不要。
+    return new TicketResponse(saved, principal.getName(), null);
   }
 
   @Transactional(readOnly = true)
@@ -55,12 +59,12 @@ public class TicketService {
       case AGENT -> ticketRepository.findByAssigneeIdOrderByCreatedAtDesc(principal.getId());
       case ADMIN -> ticketRepository.findAllByOrderByCreatedAtDesc();
     };
-    return tickets.stream().map(TicketResponse::new).toList();
+    return toResponses(tickets);
   }
 
   @Transactional(readOnly = true)
   public TicketResponse getDetail(Long id, AppUserDetails principal) {
-    return new TicketResponse(findAccessible(id, principal));
+    return toResponse(findAccessible(id, principal));
   }
 
   @Transactional
@@ -71,7 +75,7 @@ public class TicketService {
       throw new InvalidStatusTransitionException("このステータスへは変更できません");
     }
     ticket.setStatus(next);
-    return new TicketResponse(ticket);
+    return toResponse(ticket);
   }
 
   @Transactional
@@ -83,8 +87,9 @@ public class TicketService {
     Ticket ticket = ticketRepository.findById(id).orElseThrow(this::notFound);
     Long assigneeId = request.getAssigneeId();
 
+    User assignee = null;
     if (assigneeId != null) {
-      User assignee = userRepository.findById(assigneeId)
+      assignee = userRepository.findById(assigneeId)
           .orElseThrow(() -> new InvalidAssigneeException("担当者が見つかりません"));
       if (assignee.getRole() != Role.AGENT) {
         throw new InvalidAssigneeException("担当者にはAGENTのみ設定できます");
@@ -92,7 +97,14 @@ public class TicketService {
     }
 
     ticket.setAssigneeId(assigneeId);
-    return new TicketResponse(ticket);
+
+    // assigneeは検証のため既に取得済みなので、名前解決のために再度問い合わせない。
+    // requesterNameのみ1件取得する(担当者変更はrequesterと無関係のため)。
+    String requesterName = userRepository.findById(ticket.getRequesterId())
+        .map(User::getName)
+        .orElse(null);
+    String assigneeName = assignee != null ? assignee.getName() : null;
+    return new TicketResponse(ticket, requesterName, assigneeName);
   }
 
   private Ticket findAccessible(Long id, AppUserDetails principal) {
@@ -117,5 +129,49 @@ public class TicketService {
 
   private TicketNotFoundException notFound() {
     return new TicketNotFoundException("チケットが見つかりません");
+  }
+
+  /**
+   * 単一チケットをTicketResponseへ変換する。依頼者・担当者の名前は
+   * findAllByIdで1回にまとめて取得する(最大2件のIDでも1クエリ)。
+   */
+  private TicketResponse toResponse(Ticket ticket) {
+    Set<Long> userIds = new HashSet<>();
+    userIds.add(ticket.getRequesterId());
+    if (ticket.getAssigneeId() != null) {
+      userIds.add(ticket.getAssigneeId());
+    }
+    Map<Long, String> namesById = loadUserNames(userIds);
+    return new TicketResponse(ticket, namesById.get(ticket.getRequesterId()),
+        ticket.getAssigneeId() == null ? null : namesById.get(ticket.getAssigneeId()));
+  }
+
+  /**
+   * 複数チケットをまとめてTicketResponseへ変換する。
+   * チケットごとにユーザーを1件ずつ取得するN+1クエリを避けるため、
+   * 全チケットのrequesterId・assigneeIdを収集してfindAllByIdで1回だけ取得し、
+   * IDから名前へのMapを作ってから変換する。
+   */
+  private List<TicketResponse> toResponses(List<Ticket> tickets) {
+    Set<Long> userIds = new HashSet<>();
+    for (Ticket ticket : tickets) {
+      userIds.add(ticket.getRequesterId());
+      if (ticket.getAssigneeId() != null) {
+        userIds.add(ticket.getAssigneeId());
+      }
+    }
+    Map<Long, String> namesById = loadUserNames(userIds);
+    return tickets.stream()
+        .map(ticket -> new TicketResponse(ticket, namesById.get(ticket.getRequesterId()),
+            ticket.getAssigneeId() == null ? null : namesById.get(ticket.getAssigneeId())))
+        .toList();
+  }
+
+  private Map<Long, String> loadUserNames(Set<Long> userIds) {
+    if (userIds.isEmpty()) {
+      return Map.of();
+    }
+    return userRepository.findAllById(userIds).stream()
+        .collect(Collectors.toMap(User::getId, User::getName));
   }
 }

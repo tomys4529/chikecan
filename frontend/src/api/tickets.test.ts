@@ -31,7 +31,7 @@ describe('api/tickets', () => {
   it('getTicketはGET /api/tickets/{id}を呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 5, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 5, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
     );
 
     await getTicket(5);
@@ -43,7 +43,7 @@ describe('api/tickets', () => {
   it('createTicketはPOST /api/ticketsをbody付きで呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 1, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }, 201),
+      jsonResponse({ id: 1, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }, 201),
     );
 
     await createTicket({ title: 't', description: 'd', priority: 'LOW' });
@@ -57,7 +57,7 @@ describe('api/tickets', () => {
   it('updateTicketStatusはPATCH /api/tickets/{id}/statusを呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, assigneeId: 2, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketStatus(3, { status: 'IN_PROGRESS' });
@@ -71,7 +71,7 @@ describe('api/tickets', () => {
   it('updateTicketAssigneeはPATCH /api/tickets/{id}/assigneeを呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: 2, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketAssignee(3, { assigneeId: 2 });
@@ -85,7 +85,7 @@ describe('api/tickets', () => {
   it('updateTicketAssigneeはassigneeId:nullで担当解除を送信できる', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketAssignee(3, { assigneeId: null });

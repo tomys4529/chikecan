@@ -48,6 +48,32 @@ describe('Header', () => {
     expect(screen.getByRole('link', { name: 'ユーザー登録' })).toBeInTheDocument();
   });
 
+  it('ブランド名としてchikecanが表示される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Header />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('link', { name: 'chikecan' })).toBeInTheDocument();
+  });
+
   it('認証済みの場合はユーザー名とログアウトボタンを表示する', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation((input) => {
