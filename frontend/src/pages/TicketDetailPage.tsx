@@ -270,7 +270,7 @@ export function TicketDetailPage() {
                 )}
                 {agents?.map((agent) => (
                   <option key={agent.id} value={agent.id}>
-                    {agent.name}({agent.email})
+                    {agent.name}
                   </option>
                 ))}
               </select>

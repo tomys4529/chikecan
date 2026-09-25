@@ -125,37 +125,40 @@ class AdminUserControllerTest {
         .andReturn();
 
     String bodyContent = result.getResponse().getContentAsString();
-    assertThat(bodyContent).contains(AGENT_EMAIL);
-    assertThat(bodyContent).doesNotContain(USER_EMAIL);
-    assertThat(bodyContent).doesNotContain(ADMIN_EMAIL);
+    assertThat(bodyContent).contains("候補AGENT");
+    assertThat(bodyContent).doesNotContain("候補USER");
+    assertThat(bodyContent).doesNotContain("候補ADMIN");
   }
 
   @Test
-  void レスポンスにid名前メール以外の項目が含まれない() throws Exception {
+  void レスポンスにidと名前だけが含まれメールアドレス等の他の項目は含まれない() throws Exception {
     MockHttpSession session = loginAs(ADMIN_EMAIL);
 
     mockMvc.perform(get("/api/admin/agents").session(session))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].id").exists())
         .andExpect(jsonPath("$[0].name").exists())
-        .andExpect(jsonPath("$[0].email").exists())
+        .andExpect(jsonPath("$[0].email").doesNotExist())
         .andExpect(jsonPath("$[0].role").doesNotExist())
         .andExpect(jsonPath("$[0].enabled").doesNotExist())
         .andExpect(jsonPath("$[0].createdAt").doesNotExist())
-        .andExpect(content().string(not(containsString("password"))));
+        .andExpect(content().string(not(containsString("password"))))
+        // メールアドレスらしき文字列が紛れ込んでいないことも念のため確認する。
+        .andExpect(content().string(not(containsString("@"))));
   }
 
   @Test
   void 無効化されたAGENTは候補に含まれない() throws Exception {
+    String disabledName = "無効AGENT";
     String disabledEmail = "admin-agents-disabled@example.com";
     userRepository.findByEmail(disabledEmail).ifPresentOrElse(
         existing -> { },
-        () -> userRepository.save(new User("無効AGENT", disabledEmail, passwordEncoder.encode(PASSWORD), Role.AGENT, false)));
+        () -> userRepository.save(new User(disabledName, disabledEmail, passwordEncoder.encode(PASSWORD), Role.AGENT, false)));
 
     MockHttpSession session = loginAs(ADMIN_EMAIL);
 
     mockMvc.perform(get("/api/admin/agents").session(session))
         .andExpect(status().isOk())
-        .andExpect(content().string(not(containsString(disabledEmail))));
+        .andExpect(content().string(not(containsString(disabledName))));
   }
 }
