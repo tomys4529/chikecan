@@ -253,7 +253,7 @@ class TicketControllerTest {
 
     mockMvc.perform(get("/api/tickets").session(session))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[*].requesterId", everyItemEquals(userId)));
+        .andExpect(jsonPath("$.content[*].requesterId", everyItemEquals(userId)));
   }
 
   @Test
@@ -266,10 +266,11 @@ class TicketControllerTest {
         .andExpect(status().isOk())
         .andReturn();
 
-    tools.jackson.databind.JsonNode array = new tools.jackson.databind.ObjectMapper()
+    tools.jackson.databind.JsonNode root = new tools.jackson.databind.ObjectMapper()
         .readTree(result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
-    tools.jackson.databind.JsonNode assignedNode = findById(array, assigned.getId());
-    tools.jackson.databind.JsonNode unassignedNode = findById(array, unassigned.getId());
+    tools.jackson.databind.JsonNode content = root.get("content");
+    tools.jackson.databind.JsonNode assignedNode = findById(content, assigned.getId());
+    tools.jackson.databind.JsonNode unassignedNode = findById(content, unassigned.getId());
 
     assertThat(assignedNode.get("requesterName").asText()).isEqualTo("チケットUSER");
     assertThat(assignedNode.get("assigneeName").asText()).isEqualTo("チケットAGENT");
@@ -312,7 +313,7 @@ class TicketControllerTest {
 
     mockMvc.perform(get("/api/tickets").session(session))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$[*].assigneeId", everyItemEquals(agentId)));
+        .andExpect(jsonPath("$.content[*].assigneeId", everyItemEquals(agentId)));
   }
 
   @Test
@@ -953,5 +954,124 @@ class TicketControllerTest {
     // 同時に2回RESOLVEDへの更新が送られても、悲観ロックにより直列化され、
     // XPはHIGHの30のみ1回だけ加算される(60にはならない)。
     assertThat(reloadedAgent.getExperience()).isEqualTo(30);
+  }
+
+  // ===== 一覧のページネーション =====
+  // このテストクラスは@BeforeAllで1度だけデータを準備し、以降のテストメソッド間で
+  // DBの内容をロールバックしない(PER_CLASS・非トランザクション)ため、件数を厳密に
+  // 検証するテストは、他のテストの影響を受けないよう専用の一意なユーザーを使う。
+
+  @Test
+  void デフォルトでは20件ずつ取得される() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-default@example.com", "ページングUSER1", Role.USER);
+    for (int i = 0; i < 21; i++) {
+      createTicket(requesterId, null, TicketStatus.OPEN);
+    }
+    MockHttpSession session = loginAs("ticket-paging-default@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.length()").value(20))
+        .andExpect(jsonPath("$.size").value(20))
+        .andExpect(jsonPath("$.page").value(0))
+        .andExpect(jsonPath("$.totalElements").value(21))
+        .andExpect(jsonPath("$.totalPages").value(2))
+        .andExpect(jsonPath("$.first").value(true))
+        .andExpect(jsonPath("$.last").value(false));
+  }
+
+  @Test
+  void 件数が21件の場合2ページ目に1件だけ含まれる() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-21@example.com", "ページングUSER2", Role.USER);
+    for (int i = 0; i < 21; i++) {
+      createTicket(requesterId, null, TicketStatus.OPEN);
+    }
+    MockHttpSession session = loginAs("ticket-paging-21@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session).param("page", "1").param("size", "20"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.length()").value(1))
+        .andExpect(jsonPath("$.page").value(1))
+        .andExpect(jsonPath("$.totalElements").value(21))
+        .andExpect(jsonPath("$.totalPages").value(2))
+        .andExpect(jsonPath("$.first").value(false))
+        .andExpect(jsonPath("$.last").value(true));
+  }
+
+  @Test
+  void 件数が40件は2ページになり41件は3ページになる() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-40-41@example.com", "ページングUSER3", Role.USER);
+    for (int i = 0; i < 40; i++) {
+      createTicket(requesterId, null, TicketStatus.OPEN);
+    }
+    MockHttpSession session = loginAs("ticket-paging-40-41@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(40))
+        .andExpect(jsonPath("$.totalPages").value(2));
+
+    createTicket(requesterId, null, TicketStatus.OPEN);
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(41))
+        .andExpect(jsonPath("$.totalPages").value(3));
+  }
+
+  @Test
+  void sizeに極端に大きい値を指定しても上限の100件にクランプされる() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-cap@example.com", "ページングUSER4", Role.USER);
+    createTicket(requesterId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs("ticket-paging-cap@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session).param("size", "100000"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.size").value(100));
+  }
+
+  @Test
+  void 一覧が0件の場合はtotalPagesが0でfirstもlastもtrueになる() throws Exception {
+    createIfAbsent("ticket-paging-empty@example.com", "ページングUSER5", Role.USER);
+    // このユーザーにはチケットを1件も作成しない。
+    MockHttpSession session = loginAs("ticket-paging-empty@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.length()").value(0))
+        .andExpect(jsonPath("$.totalElements").value(0))
+        .andExpect(jsonPath("$.totalPages").value(0))
+        .andExpect(jsonPath("$.first").value(true))
+        .andExpect(jsonPath("$.last").value(true));
+  }
+
+  @Test
+  void ページネーション後もロールごとの取得範囲外のチケットは含まれない() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-scope@example.com", "ページングUSER6", Role.USER);
+    Long otherRequesterId = createIfAbsent("ticket-paging-scope-other@example.com", "ページングUSER7", Role.USER);
+    for (int i = 0; i < 5; i++) {
+      createTicket(requesterId, null, TicketStatus.OPEN);
+    }
+    for (int i = 0; i < 5; i++) {
+      createTicket(otherRequesterId, null, TicketStatus.OPEN);
+    }
+    MockHttpSession session = loginAs("ticket-paging-scope@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(5))
+        .andExpect(jsonPath("$.content[*].requesterId", everyItemEquals(requesterId)));
+  }
+
+  @Test
+  void ページネーション後も依頼者名担当者名がcontentへ含まれる() throws Exception {
+    Long requesterId = createIfAbsent("ticket-paging-names@example.com", "ページングUSER8", Role.USER);
+    createTicket(requesterId, agentId, TicketStatus.OPEN);
+    MockHttpSession session = loginAs("ticket-paging-names@example.com");
+
+    mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content[0].requesterName").value("ページングUSER8"))
+        .andExpect(jsonPath("$.content[0].assigneeName").value("チケットAGENT"));
   }
 }

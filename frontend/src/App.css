@@ -264,6 +264,11 @@
   background: rgba(47, 93, 159, 0.05);
 }
 
+/* 担当者未設定を、設定済みの名前(通常文字)と区別できるよう控えめな色で表示する */
+.ticket-list__unassigned {
+  color: var(--color-text-muted);
+}
+
 /* ===== バッジ(ステータス・優先度) ===== */
 /* 色分けに加えて必ず日本語ラベルを併記する(色だけに依存しない) */
 .ticket-status-badge,

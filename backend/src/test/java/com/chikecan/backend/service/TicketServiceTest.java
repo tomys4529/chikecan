@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyIterable;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -17,9 +18,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.chikecan.backend.dto.PageResponse;
 import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
@@ -41,6 +47,10 @@ import com.chikecan.backend.security.AppUserDetails;
 
 @ExtendWith(MockitoExtension.class)
 class TicketServiceTest {
+
+  // TicketService内のTICKET_LIST_SORTと同じ並び順(createdAt降順・id降順)。
+  // privateフィールドのため参照できず、テスト側でも同じ値を再構築して比較する。
+  private static final Sort TICKET_LIST_SORT = Sort.by(Sort.Direction.DESC, "createdAt", "id");
 
   @Mock
   private TicketRepository ticketRepository;
@@ -117,48 +127,106 @@ class TicketServiceTest {
   }
 
   @Test
-  void USERの一覧はrequesterIdで検索される() {
+  void USERの一覧はrequesterIdとPageableで検索される() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(1L, Role.USER);
-    when(ticketRepository.findByRequesterIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+    when(ticketRepository.findByRequesterId(eq(1L), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of()));
 
-    ticketService.list(principal);
+    ticketService.list(principal, 0, 20);
 
-    verify(ticketRepository).findByRequesterIdOrderByCreatedAtDesc(1L);
-    verify(ticketRepository, never()).findAllByOrderByCreatedAtDesc();
+    verify(ticketRepository).findByRequesterId(eq(1L), any(Pageable.class));
+    verify(ticketRepository, never()).findAll(any(Pageable.class));
+    verify(ticketRepository, never()).findByAssigneeId(any(), any());
   }
 
   @Test
-  void AGENTの一覧はassigneeIdで検索される() {
+  void AGENTの一覧はassigneeIdとPageableで検索される() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(2L, Role.AGENT);
-    when(ticketRepository.findByAssigneeIdOrderByCreatedAtDesc(2L)).thenReturn(List.of());
+    when(ticketRepository.findByAssigneeId(eq(2L), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of()));
 
-    ticketService.list(principal);
+    ticketService.list(principal, 0, 20);
 
-    verify(ticketRepository).findByAssigneeIdOrderByCreatedAtDesc(2L);
+    verify(ticketRepository).findByAssigneeId(eq(2L), any(Pageable.class));
   }
 
   @Test
-  void ADMINの一覧は全件検索される() {
+  void ADMINの一覧はPageableで全件検索される() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(3L, Role.ADMIN);
-    when(ticketRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
+    when(ticketRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
 
-    ticketService.list(principal);
+    ticketService.list(principal, 0, 20);
 
-    verify(ticketRepository).findAllByOrderByCreatedAtDesc();
+    verify(ticketRepository).findAll(any(Pageable.class));
   }
 
   @Test
-  void 一覧取得は依頼者名担当者名を含みユーザー取得はチケット件数によらず1回だけ発行される() {
+  void 並び順はcreatedAt降順id降順で指定される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(3L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+    ticketService.list(principal, 0, 20);
+
+    ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+    verify(ticketRepository).findAll(captor.capture());
+    Sort sort = captor.getValue().getSort();
+    assertThat(sort.getOrderFor("createdAt").getDirection()).isEqualTo(Sort.Direction.DESC);
+    assertThat(sort.getOrderFor("id").getDirection()).isEqualTo(Sort.Direction.DESC);
+  }
+
+  @Test
+  void sizeが1未満の場合はデフォルトの20件にクランプされる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(3L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+    ticketService.list(principal, 0, 0);
+
+    ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+    verify(ticketRepository).findAll(captor.capture());
+    assertThat(captor.getValue().getPageSize()).isEqualTo(20);
+  }
+
+  @Test
+  void sizeが上限を超える場合は100件にクランプされる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(3L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+    ticketService.list(principal, 0, 100_000);
+
+    ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+    verify(ticketRepository).findAll(captor.capture());
+    assertThat(captor.getValue().getPageSize()).isEqualTo(100);
+  }
+
+  @Test
+  void pageが負数の場合は0ページ目にクランプされる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(3L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+
+    ticketService.list(principal, -5, 20);
+
+    ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+    verify(ticketRepository).findAll(captor.capture());
+    assertThat(captor.getValue().getPageNumber()).isEqualTo(0);
+  }
+
+  @Test
+  void 一覧取得は依頼者名担当者名を含みユーザー取得はページ内チケット件数によらず1回だけ発行される() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(9L, Role.ADMIN);
 
     Ticket ticketA = ticketWith(100L, TicketStatus.OPEN, 1L, 2L);
     Ticket ticketB = ticketWith(101L, TicketStatus.OPEN, 1L, null);
     Ticket ticketC = ticketWith(102L, TicketStatus.OPEN, 3L, 2L);
-    when(ticketRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(ticketA, ticketB, ticketC));
+    when(ticketRepository.findAll(any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(ticketA, ticketB, ticketC)));
 
     User requester1 = userWith(1L, "依頼者イチ");
     User requester3 = userWith(3L, "依頼者サン");
@@ -166,7 +234,8 @@ class TicketServiceTest {
     // 3件のチケット・重複を含む3種類のユーザーIDに対し、findAllByIdは1回だけ呼ばれる想定。
     when(userRepository.findAllById(any())).thenReturn(List.of(requester1, requester3, assignee2));
 
-    List<TicketResponse> responses = ticketService.list(principal);
+    PageResponse<TicketResponse> pageResponse = ticketService.list(principal, 0, 20);
+    List<TicketResponse> responses = pageResponse.getContent();
 
     assertThat(responses).hasSize(3);
     assertThat(responses.get(0).getRequesterName()).isEqualTo("依頼者イチ");
@@ -184,12 +253,76 @@ class TicketServiceTest {
   void 一覧が0件の場合はユーザー取得を発行しない() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(9L, Role.ADMIN);
-    when(ticketRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
+    // totalElements=0であってもPageableは20件ページのまま(unpaged扱いにしない)ことで
+    // 本番のfindAll(Pageable)の挙動を正しく再現する。
+    when(ticketRepository.findAll(any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
-    List<TicketResponse> responses = ticketService.list(principal);
+    PageResponse<TicketResponse> pageResponse = ticketService.list(principal, 0, 20);
 
-    assertThat(responses).isEmpty();
+    assertThat(pageResponse.getContent()).isEmpty();
+    assertThat(pageResponse.getTotalElements()).isZero();
+    assertThat(pageResponse.getTotalPages()).isZero();
+    assertThat(pageResponse.isFirst()).isTrue();
+    assertThat(pageResponse.isLast()).isTrue();
     verify(userRepository, never()).findAllById(any());
+  }
+
+  @Test
+  void 件数が21件を20件ずつに分けると1ページ目は20件で2ページ目は1件になりtotalElementsとtotalPagesが正しい() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+
+    List<Ticket> firstPageTickets = java.util.stream.IntStream.range(0, 20)
+        .mapToObj(i -> ticketWith((long) (200 + i), TicketStatus.OPEN, 1L, null))
+        .toList();
+    when(ticketRepository.findAll(eq(PageRequest.of(0, 20, TICKET_LIST_SORT))))
+        .thenReturn(new PageImpl<>(firstPageTickets, PageRequest.of(0, 20, TICKET_LIST_SORT), 21));
+    when(userRepository.findAllById(any())).thenReturn(List.of(userWith(1L, "依頼者太郎")));
+
+    PageResponse<TicketResponse> firstPage = ticketService.list(principal, 0, 20);
+
+    assertThat(firstPage.getContent()).hasSize(20);
+    assertThat(firstPage.getTotalElements()).isEqualTo(21);
+    assertThat(firstPage.getTotalPages()).isEqualTo(2);
+    assertThat(firstPage.isFirst()).isTrue();
+    assertThat(firstPage.isLast()).isFalse();
+
+    Ticket lastTicket = ticketWith(220L, TicketStatus.OPEN, 1L, null);
+    when(ticketRepository.findAll(eq(PageRequest.of(1, 20, TICKET_LIST_SORT))))
+        .thenReturn(new PageImpl<>(List.of(lastTicket), PageRequest.of(1, 20, TICKET_LIST_SORT), 21));
+
+    PageResponse<TicketResponse> secondPage = ticketService.list(principal, 1, 20);
+
+    assertThat(secondPage.getContent()).hasSize(1);
+    assertThat(secondPage.getTotalElements()).isEqualTo(21);
+    assertThat(secondPage.getTotalPages()).isEqualTo(2);
+    assertThat(secondPage.isFirst()).isFalse();
+    assertThat(secondPage.isLast()).isTrue();
+  }
+
+  @Test
+  void 件数が40件の場合は2ページになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 40));
+
+    PageResponse<TicketResponse> pageResponse = ticketService.list(principal, 0, 20);
+
+    assertThat(pageResponse.getTotalPages()).isEqualTo(2);
+  }
+
+  @Test
+  void 件数が41件の場合は3ページになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    when(ticketRepository.findAll(any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 41));
+
+    PageResponse<TicketResponse> pageResponse = ticketService.list(principal, 0, 20);
+
+    assertThat(pageResponse.getTotalPages()).isEqualTo(3);
   }
 
   @Test
