@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getTicket, updateTicketAssignee, updateTicketStatus } from '../api/tickets';
 import { listAgents } from '../api/adminUsers';
@@ -27,9 +27,24 @@ function parseTicketId(idParam: string | undefined): number | null {
   return value;
 }
 
+// 一覧の2ページ目以降から遷移してきた場合はそのページへ戻れるようにする。
+// locationのstateは任意に書き換え可能なため、一覧ページ自身のURL形式に
+// 一致する場合だけ信頼し、それ以外(直接アクセス・不正な値)は/ticketsへ戻す。
+function resolveBackToTicketList(state: unknown): string {
+  if (state && typeof state === 'object' && 'from' in state) {
+    const from = (state as { from?: unknown }).from;
+    if (typeof from === 'string' && /^\/tickets(\?page=[1-9]\d*)?$/.test(from)) {
+      return from;
+    }
+  }
+  return '/tickets';
+}
+
 export function TicketDetailPage() {
   const { id: idParam } = useParams();
+  const location = useLocation();
   const ticketId = parseTicketId(idParam);
+  const backToTicketList = resolveBackToTicketList(location.state);
   const { user, invalidateSession, applyExperienceUpdate } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
   const isAgent = user?.role === 'AGENT';
@@ -314,7 +329,7 @@ export function TicketDetailPage() {
         )}
 
         <div className="ticket-detail__back">
-          <Link to="/tickets" className="back-link">
+          <Link to={backToTicketList} className="back-link">
             ← チケット一覧へ戻る
           </Link>
         </div>

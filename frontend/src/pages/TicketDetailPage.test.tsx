@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { ProtectedRoute } from '../routes/ProtectedRoute';
 import { TicketDetailPage } from './TicketDetailPage';
@@ -9,7 +9,13 @@ import { XpPanel } from '../components/XpPanel';
 import { agentSummary, csrfResponse, errorResponse, jsonResponse, testUser } from '../test-utils/apiMocks';
 import type { TicketResponse, TicketStatusUpdateResponse, XpAwardResult } from '../types/ticket';
 
-function renderDetailPage(path: string, fetchImpl: typeof fetch) {
+// 「チケット一覧へ戻る」で実際にどのURL(クエリ込み)へ着地したかを検証するためのスタブ。
+function TicketListStub() {
+  const location = useLocation();
+  return <p>チケット一覧画面:{location.pathname}{location.search}</p>;
+}
+
+function renderDetailPage(path: string | { pathname: string; state?: unknown }, fetchImpl: typeof fetch) {
   vi.stubGlobal('fetch', vi.fn(fetchImpl));
 
   return render(
@@ -17,7 +23,7 @@ function renderDetailPage(path: string, fetchImpl: typeof fetch) {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<p>ログイン画面</p>} />
-          <Route path="/tickets" element={<p>チケット一覧画面</p>} />
+          <Route path="/tickets" element={<TicketListStub />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/tickets/:id" element={<TicketDetailPage />} />
           </Route>
@@ -944,7 +950,60 @@ describe('TicketDetailPage', () => {
       await screen.findByText('サンプルチケット');
       await user.click(screen.getByRole('link', { name: '← チケット一覧へ戻る' }));
 
-      expect(await screen.findByText('チケット一覧画面')).toBeInTheDocument();
+      expect(await screen.findByText('チケット一覧画面:/tickets')).toBeInTheDocument();
+    });
+
+    it('一覧の2ページ目から遷移してきた場合はそのページへ戻れる', async () => {
+      renderDetailPage(
+        { pathname: '/tickets/7', state: { from: '/tickets?page=3' } },
+        (input) => {
+          const url = String(input);
+          if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+          if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+          if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+          throw new Error(`unexpected fetch: ${url}`);
+        },
+      );
+
+      await screen.findByText('サンプルチケット');
+      const link = screen.getByRole('link', { name: '← チケット一覧へ戻る' });
+      expect(link).toHaveAttribute('href', '/tickets?page=3');
+
+      const user = userEvent.setup();
+      await user.click(link);
+
+      expect(await screen.findByText('チケット一覧画面:/tickets?page=3')).toBeInTheDocument();
+    });
+
+    it('stateが一覧URLの形式に一致しない場合は/ticketsへ戻る(不正な戻り先を信頼しない)', async () => {
+      renderDetailPage(
+        { pathname: '/tickets/7', state: { from: 'https://evil.example.com/' } },
+        (input) => {
+          const url = String(input);
+          if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+          if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+          if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+          throw new Error(`unexpected fetch: ${url}`);
+        },
+      );
+
+      await screen.findByText('サンプルチケット');
+      const link = screen.getByRole('link', { name: '← チケット一覧へ戻る' });
+      expect(link).toHaveAttribute('href', '/tickets');
+    });
+
+    it('stateが無い(詳細URLへ直接アクセスした)場合は/ticketsへ戻る', async () => {
+      renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+
+      await screen.findByText('サンプルチケット');
+      const link = screen.getByRole('link', { name: '← チケット一覧へ戻る' });
+      expect(link).toHaveAttribute('href', '/tickets');
     });
   });
 });

@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import type {
+  PageResponse,
   TicketAssigneeUpdateRequest,
   TicketCreateRequest,
   TicketResponse,
@@ -8,8 +9,12 @@ import type {
   TicketUpdateRequest,
 } from '../types/ticket';
 
-export function listTickets(): Promise<TicketResponse[]> {
-  return apiFetch<TicketResponse[]>('/api/tickets');
+/**
+ * page・sizeはバックエンドAPIの規約(Spring Data標準)に合わせ0始まりで渡す。
+ * 画面上のページ番号(1始まり)との変換は呼び出し側(TicketListPage)で行う。
+ */
+export function listTickets(page: number, size: number): Promise<PageResponse<TicketResponse>> {
+  return apiFetch<PageResponse<TicketResponse>>(`/api/tickets?page=${page}&size=${size}`);
 }
 
 export function getTicket(id: number): Promise<TicketResponse> {
