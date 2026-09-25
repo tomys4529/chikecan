@@ -7,6 +7,11 @@ export interface UserResponse {
   role: Role;
   enabled: boolean;
   createdAt: string;
+  experience: number;
+  level: number;
+  currentLevelExperience: number;
+  experienceToNextLevel: number;
+  experienceProgressPercentage: number;
 }
 
 export interface ErrorResponse {

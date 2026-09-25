@@ -42,6 +42,9 @@ public class User {
   @Column(nullable = false)
   private boolean enabled;
 
+  @Column(nullable = false)
+  private int experience;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -103,6 +106,38 @@ public class User {
 
   public void setEnabled(boolean enabled) {
     this.enabled = enabled;
+  }
+
+  public int getExperience() {
+    return experience;
+  }
+
+  /**
+   * 累計XPへamountを加算する。負数は業務上発生しない想定だが、
+   * 万一渡された場合でも累計XPが負にならないよう下限を0に丸める。
+   */
+  public void addExperience(int amount) {
+    this.experience = Math.max(0, this.experience + amount);
+  }
+
+  /**
+   * レベル・レベル内XP・次のレベルまでのXPは、DBへ重複保存せず
+   * ExperienceLevelを介して累計XPから都度計算する。
+   */
+  public int getLevel() {
+    return ExperienceLevel.level(experience);
+  }
+
+  public int getCurrentLevelExperience() {
+    return ExperienceLevel.currentLevelExperience(experience);
+  }
+
+  public int getExperienceToNextLevel() {
+    return ExperienceLevel.experienceToNextLevel(experience);
+  }
+
+  public int getExperienceProgressPercentage() {
+    return ExperienceLevel.progressPercentage(experience);
   }
 
   public Instant getCreatedAt() {

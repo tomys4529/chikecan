@@ -1,0 +1,142 @@
+.xp-panel {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 16px;
+  padding: 16px 24px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #0b1130 0%, #172a63 50%, #4c2a8f 100%);
+  color: #eef2ff;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(10, 14, 40, 0.35);
+}
+
+.xp-panel__mascot {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+}
+
+.xp-panel__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.xp-panel__level-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  height: 36px;
+  padding-inline: 14px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: #eafcff;
+  background: linear-gradient(135deg, #21327a, #3566b8);
+  clip-path: polygon(12% 0%, 88% 0%, 100% 50%, 88% 100%, 12% 100%, 0% 50%);
+  box-shadow: 0 0 12px rgba(99, 179, 255, 0.5);
+}
+
+.xp-panel__progress {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.xp-panel__stats {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: #c7d2fe;
+  min-width: 140px;
+}
+
+.xp-panel__total {
+  font-weight: 600;
+  color: #f5f7ff;
+}
+
+.xp-panel__bar-track {
+  flex: 1;
+  min-width: 80px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.xp-panel__bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22d3ee, #60a5fa);
+  box-shadow: 0 0 10px rgba(96, 165, 250, 0.65);
+  transition: width 0.6s ease;
+}
+
+.xp-panel__bar-fill--no-transition {
+  transition: none;
+}
+
+.xp-panel__percentage {
+  flex-shrink: 0;
+  min-width: 38px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0f2fe;
+}
+
+@media (max-width: 640px) {
+  .xp-panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .xp-panel__mascot {
+    align-self: center;
+  }
+
+  .xp-panel__body {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .xp-panel__level-badge {
+    align-self: center;
+  }
+
+  .xp-panel__progress {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .xp-panel__stats {
+    flex-direction: row;
+    justify-content: space-between;
+    min-width: 0;
+  }
+
+  .xp-panel__percentage {
+    align-self: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xp-panel__bar-fill {
+    transition: none;
+  }
+}

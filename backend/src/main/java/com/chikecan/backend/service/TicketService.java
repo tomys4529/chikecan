@@ -14,9 +14,12 @@ import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
 import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.dto.TicketStatusUpdateResponse;
 import com.chikecan.backend.dto.TicketUpdateRequest;
+import com.chikecan.backend.dto.XpAwardResult;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.Ticket;
+import com.chikecan.backend.entity.TicketPriority;
 import com.chikecan.backend.entity.TicketStatus;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.InvalidAssigneeException;
@@ -35,6 +38,11 @@ public class TicketService {
       TicketStatus.IN_PROGRESS, Set.of(TicketStatus.RESOLVED),
       TicketStatus.RESOLVED, Set.of(TicketStatus.CLOSED, TicketStatus.IN_PROGRESS),
       TicketStatus.CLOSED, Set.of());
+
+  private static final Map<TicketPriority, Integer> XP_BY_PRIORITY = Map.of(
+      TicketPriority.LOW, 10,
+      TicketPriority.MEDIUM, 20,
+      TicketPriority.HIGH, 30);
 
   private final TicketRepository ticketRepository;
   private final UserRepository userRepository;
@@ -69,15 +77,46 @@ public class TicketService {
     return toResponse(findAccessible(id, principal));
   }
 
+  /**
+   * ステータス更新とXP判定・付与を同一トランザクションで行う。
+   * 更新対象チケットは悲観ロック(SELECT ... FOR UPDATE)付きで取得し、
+   * 同時に来た複数のステータス更新リクエストがxp_awardedを二重にfalseのまま
+   * 読んで二重付与することを防ぐ。ロックは他のチケット参照処理には広げない。
+   */
   @Transactional
-  public TicketResponse updateStatus(Long id, TicketStatusUpdateRequest request, AppUserDetails principal) {
-    Ticket ticket = findAccessibleForStatusChange(id, principal);
+  public TicketStatusUpdateResponse updateStatus(Long id, TicketStatusUpdateRequest request, AppUserDetails principal) {
+    Ticket ticket = findAccessibleForStatusChangeLocked(id, principal);
     TicketStatus next = request.getStatus();
     if (!isAllowedTransition(ticket.getStatus(), next)) {
       throw new InvalidStatusTransitionException("このステータスへは変更できません");
     }
     ticket.setStatus(next);
-    return toResponse(ticket);
+
+    XpAwardResult xpResult = XpAwardResult.none();
+    // 初めてRESOLVEDになったときだけXPを判定する。判定済みフラグは、
+    // 実際に付与できたか(有効なAGENTが担当していたか)に関わらずここで確定させる。
+    if (next == TicketStatus.RESOLVED && !ticket.isXpAwarded()) {
+      ticket.setXpAwarded(true);
+      xpResult = tryAwardXp(ticket);
+    }
+
+    return new TicketStatusUpdateResponse(toResponse(ticket), xpResult);
+  }
+
+  private XpAwardResult tryAwardXp(Ticket ticket) {
+    Long assigneeId = ticket.getAssigneeId();
+    if (assigneeId == null) {
+      return XpAwardResult.none();
+    }
+    User assignee = userRepository.findById(assigneeId).orElse(null);
+    if (assignee == null || assignee.getRole() != Role.AGENT) {
+      return XpAwardResult.none();
+    }
+    int gainedExperience = XP_BY_PRIORITY.getOrDefault(ticket.getPriority(), 0);
+    int previousLevel = assignee.getLevel();
+    assignee.addExperience(gainedExperience);
+    int currentLevel = assignee.getLevel();
+    return XpAwardResult.awarded(gainedExperience, previousLevel, currentLevel, assignee.getExperience());
   }
 
   @Transactional
@@ -144,10 +183,10 @@ public class TicketService {
     };
   }
 
-  private Ticket findAccessibleForStatusChange(Long id, AppUserDetails principal) {
+  private Ticket findAccessibleForStatusChangeLocked(Long id, AppUserDetails principal) {
     return switch (principal.getRole()) {
-      case AGENT -> ticketRepository.findByIdAndAssigneeId(id, principal.getId()).orElseThrow(this::notFound);
-      case ADMIN -> ticketRepository.findById(id).orElseThrow(this::notFound);
+      case AGENT -> ticketRepository.findByIdAndAssigneeIdForUpdate(id, principal.getId()).orElseThrow(this::notFound);
+      case ADMIN -> ticketRepository.findByIdForUpdate(id).orElseThrow(this::notFound);
       case USER -> throw new AccessDeniedException("権限がありません");
     };
   }

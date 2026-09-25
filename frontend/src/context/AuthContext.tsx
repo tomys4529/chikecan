@@ -6,6 +6,15 @@ import type { LoginRequest, RegisterRequest, UserResponse } from '../types/auth'
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
+/** ステータス更新レスポンスのxpResultから、ユーザーのXP関連フィールドだけを更新するための最小限の形。 */
+export interface ExperienceUpdate {
+  experience: number;
+  level: number;
+  currentLevelExperience: number;
+  experienceToNextLevel: number;
+  experienceProgressPercentage: number;
+}
+
 interface AuthContextValue {
   user: UserResponse | null;
   status: AuthStatus;
@@ -14,6 +23,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   register: (input: RegisterRequest) => Promise<UserResponse>;
   invalidateSession: () => void;
+  applyExperienceUpdate: (update: ExperienceUpdate) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -83,7 +93,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void ensureCsrfToken();
   }, []);
 
-  const value: AuthContextValue = { user, status, initError, login, logout, register, invalidateSession };
+  /**
+   * チケットのステータス更新レスポンス(xpResult)の値でログインユーザーのXP情報だけを更新する。
+   * ログアウト・再ログインや/api/auth/meの再取得を要求せず、サーバーが返した最新値を
+   * そのまま反映することで、表示とサーバー状態の不整合を避ける。
+   */
+  const applyExperienceUpdate = useCallback((update: ExperienceUpdate) => {
+    setUser((current) => (current ? { ...current, ...update } : current));
+  }, []);
+
+  const value: AuthContextValue = {
+    user,
+    status,
+    initError,
+    login,
+    logout,
+    register,
+    invalidateSession,
+    applyExperienceUpdate,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

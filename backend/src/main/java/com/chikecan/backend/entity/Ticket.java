@@ -42,6 +42,14 @@ public class Ticket {
   @Column(name = "assignee_id")
   private Long assigneeId;
 
+  /**
+   * 初回RESOLVED時のXP判定が完了したかどうか。実際にXPを付与できたか
+   * (担当者が有効なAGENTだったか)ではなく、判定処理自体が一度行われたかを表す。
+   * これによりRESOLVED→IN_PROGRESS→RESOLVEDの再判定・二重付与を防ぐ。
+   */
+  @Column(name = "xp_awarded", nullable = false)
+  private boolean xpAwarded;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -109,6 +117,14 @@ public class Ticket {
 
   public void setAssigneeId(Long assigneeId) {
     this.assigneeId = assigneeId;
+  }
+
+  public boolean isXpAwarded() {
+    return xpAwarded;
+  }
+
+  public void setXpAwarded(boolean xpAwarded) {
+    this.xpAwarded = xpAwarded;
   }
 
   public Instant getCreatedAt() {

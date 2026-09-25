@@ -20,6 +20,11 @@ export function testUser(overrides: Partial<UserResponse> = {}): UserResponse {
     role: 'USER',
     enabled: true,
     createdAt: '2026-01-01T00:00:00Z',
+    experience: 0,
+    level: 1,
+    currentLevelExperience: 0,
+    experienceToNextLevel: 100,
+    experienceProgressPercentage: 0,
     ...overrides,
   };
 }
