@@ -26,9 +26,10 @@ USER・AGENT・ADMINの3つの役割でチケットのやり取りを行う、�
 
 ## 公開URL
 
-**https://chikecan.onrender.com/**
+- 公開アプリ（実際に操作できるデモ環境）: [https://chikecan.onrender.com/](https://chikecan.onrender.com/)
+- ソースコード（GitHubリポジトリ）: [https://github.com/tomys4529/chikecan](https://github.com/tomys4529/chikecan)
 
-Renderの無料インスタンスで稼働しているため、しばらくアクセスがないとスリープ状態になり、初回アクセス時の表示に時間がかかることがあります。あらかじめご了承ください。
+公開アプリはRenderの無料インスタンスで稼働しているため、しばらくアクセスがないとスリープ状態になり、初回アクセス時の表示に時間がかかることがあります。あらかじめご了承ください。
 
 ## 基本的な利用の流れ
 
