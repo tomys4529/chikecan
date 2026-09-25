@@ -65,6 +65,44 @@ describe('TicketDetailPage', () => {
     expect(screen.getByText('内容説明')).toBeInTheDocument();
   });
 
+  it('依頼者名・担当者名が表示され「依頼者ID」というラベルは表示されない', async () => {
+    renderDetailPage('/tickets/7', (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
+      if (url.endsWith('/api/tickets/7')) {
+        return Promise.resolve(
+          jsonResponse(ticketResponse({ requesterName: '山田太郎', assigneeName: '鈴木花子' })),
+        );
+      }
+      if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await screen.findByText('サンプルチケット');
+    expect(screen.getByText('依頼者')).toBeInTheDocument();
+    expect(screen.getByText('山田太郎')).toBeInTheDocument();
+    expect(screen.getByText('鈴木花子')).toBeInTheDocument();
+    expect(screen.queryByText('依頼者ID')).not.toBeInTheDocument();
+  });
+
+  it('担当者未設定時は「未割り当て」と表示される', async () => {
+    renderDetailPage('/tickets/7', (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+      if (url.endsWith('/api/tickets/7')) {
+        return Promise.resolve(
+          jsonResponse(ticketResponse({ requesterName: '山田太郎', assigneeId: null, assigneeName: null })),
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await screen.findByText('サンプルチケット');
+    expect(screen.getByText('未割り当て')).toBeInTheDocument();
+  });
+
   it('存在しない・権限がないチケットは同じメッセージで404表示する', async () => {
     renderDetailPage('/tickets/999', (input) => {
       const url = String(input);
