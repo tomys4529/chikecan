@@ -6,10 +6,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.chikecan.backend.dto.PageResponse;
 import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
@@ -44,6 +49,12 @@ public class TicketService {
       TicketPriority.MEDIUM, 20,
       TicketPriority.HIGH, 30);
 
+  private static final int DEFAULT_PAGE_SIZE = 20;
+  // 異常に大きなsizeを指定されても一覧取得で大量取得にならないよう上限を設ける。
+  private static final int MAX_PAGE_SIZE = 100;
+  // 同じcreatedAtのチケットが複数あっても順序が不安定にならないよう、idを第2ソート条件にする。
+  private static final Sort TICKET_LIST_SORT = Sort.by(Sort.Direction.DESC, "createdAt", "id");
+
   private final TicketRepository ticketRepository;
   private final UserRepository userRepository;
 
@@ -62,14 +73,35 @@ public class TicketService {
     return new TicketResponse(saved, principal.getName(), null);
   }
 
+  /**
+   * ロールごとの取得範囲(USER:自分が依頼者/AGENT:自分が担当者/ADMIN:全件)は
+   * 従来どおりRepositoryのクエリ段階で絞り込む(全件取得してからJavaで
+   * 20件へ切り分けたりはしない)。総件数(totalElements)もこの絞り込み後の
+   * Pageから取得するため、ロール外のチケットが件数へ混入することはない。
+   */
   @Transactional(readOnly = true)
-  public List<TicketResponse> list(AppUserDetails principal) {
-    List<Ticket> tickets = switch (principal.getRole()) {
-      case USER -> ticketRepository.findByRequesterIdOrderByCreatedAtDesc(principal.getId());
-      case AGENT -> ticketRepository.findByAssigneeIdOrderByCreatedAtDesc(principal.getId());
-      case ADMIN -> ticketRepository.findAllByOrderByCreatedAtDesc();
+  public PageResponse<TicketResponse> list(AppUserDetails principal, int page, int size) {
+    Pageable pageable = toPageable(page, size);
+    Page<Ticket> ticketsPage = switch (principal.getRole()) {
+      case USER -> ticketRepository.findByRequesterId(principal.getId(), pageable);
+      case AGENT -> ticketRepository.findByAssigneeId(principal.getId(), pageable);
+      case ADMIN -> ticketRepository.findAll(pageable);
     };
-    return toResponses(tickets);
+
+    return new PageResponse<>(
+        toResponses(ticketsPage.getContent()),
+        ticketsPage.getNumber(),
+        ticketsPage.getSize(),
+        ticketsPage.getTotalElements(),
+        ticketsPage.getTotalPages(),
+        ticketsPage.isFirst(),
+        ticketsPage.isLast());
+  }
+
+  private Pageable toPageable(int page, int size) {
+    int safePage = Math.max(page, 0);
+    int safeSize = size < 1 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+    return PageRequest.of(safePage, safeSize, TICKET_LIST_SORT);
   }
 
   @Transactional(readOnly = true)

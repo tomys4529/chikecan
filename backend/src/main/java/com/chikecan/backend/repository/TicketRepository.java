@@ -1,8 +1,9 @@
 package com.chikecan.backend.repository;
 
-import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -14,11 +15,14 @@ import com.chikecan.backend.entity.Ticket;
 
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
-  List<Ticket> findByRequesterIdOrderByCreatedAtDesc(Long requesterId);
+  /**
+   * 並び順(createdAt降順・id降順)はPageableのSortとして呼び出し側(Service)から
+   * 指定する。全件取得(findAll(Pageable))はJpaRepositoryが標準で提供しているため、
+   * ADMIN向けに専用メソッドは用意しない。
+   */
+  Page<Ticket> findByRequesterId(Long requesterId, Pageable pageable);
 
-  List<Ticket> findByAssigneeIdOrderByCreatedAtDesc(Long assigneeId);
-
-  List<Ticket> findAllByOrderByCreatedAtDesc();
+  Page<Ticket> findByAssigneeId(Long assigneeId, Pageable pageable);
 
   Optional<Ticket> findByIdAndRequesterId(Long id, Long requesterId);
 

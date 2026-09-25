@@ -17,14 +17,16 @@ describe('api/tickets', () => {
     vi.unstubAllGlobals();
   });
 
-  it('listTicketsはGET /api/ticketsを呼ぶ', async () => {
+  it('listTicketsはGET /api/tickets?page=&size=を呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValue(jsonResponse([]));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ content: [], page: 0, size: 20, totalElements: 0, totalPages: 0, first: true, last: true }),
+    );
 
-    await listTickets();
+    await listTickets(0, 20);
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain('/api/tickets');
+    expect(String(url)).toContain('/api/tickets?page=0&size=20');
     expect((init as RequestInit).method ?? 'GET').toBe('GET');
   });
 
