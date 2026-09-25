@@ -155,6 +155,7 @@ class TicketServiceTest {
     User requester1 = userWith(1L, "依頼者イチ");
     User requester3 = userWith(3L, "依頼者サン");
     User assignee2 = userWith(2L, "担当者ニ");
+    // 3件のチケット・重複を含む3種類のユーザーIDに対し、findAllByIdは1回だけ呼ばれる想定。
     when(userRepository.findAllById(any())).thenReturn(List.of(requester1, requester3, assignee2));
 
     List<TicketResponse> responses = ticketService.list(principal);
@@ -169,6 +170,18 @@ class TicketServiceTest {
 
     verify(userRepository, times(1)).findAllById(any());
     verify(userRepository, never()).findById(any());
+  }
+
+  @Test
+  void 一覧が0件の場合はユーザー取得を発行しない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    when(ticketRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of());
+
+    List<TicketResponse> responses = ticketService.list(principal);
+
+    assertThat(responses).isEmpty();
+    verify(userRepository, never()).findAllById(any());
   }
 
   @Test
@@ -194,6 +207,20 @@ class TicketServiceTest {
 
     assertThat(response.getRequesterName()).isEqualTo("依頼者太郎");
     assertThat(response.getAssigneeName()).isEqualTo("担当花子");
+  }
+
+  @Test
+  void 担当者未設定のチケット詳細はassigneeNameがnullになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    Ticket ticket = ticketWith(41L, TicketStatus.OPEN, 1L, null);
+    when(ticketRepository.findById(41L)).thenReturn(Optional.of(ticket));
+    when(userRepository.findAllById(any())).thenReturn(List.of(userWith(1L, "依頼者太郎")));
+
+    TicketResponse response = ticketService.getDetail(41L, principal);
+
+    assertThat(response.getRequesterName()).isEqualTo("依頼者太郎");
+    assertThat(response.getAssigneeName()).isNull();
   }
 
   @Test
@@ -351,6 +378,8 @@ class TicketServiceTest {
     assertThat(response.getAssigneeId()).isEqualTo(30L);
     assertThat(response.getAssigneeName()).isEqualTo("担当者");
     assertThat(response.getRequesterName()).isEqualTo("依頼者太郎");
+    // 担当者検証で既に取得済みのUserを再利用するため、findByIdは(30L用の1回のみ)。
+    // findAllByIdはこのメソッド内では使用しない(1件ずつの直接取得で十分なため)。
     verify(userRepository, never()).findAllById(any());
   }
 
