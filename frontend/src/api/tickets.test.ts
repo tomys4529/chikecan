@@ -74,7 +74,10 @@ describe('api/tickets', () => {
   it('updateTicketStatusはPATCH /api/tickets/{id}/statusを呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' }),
+      jsonResponse({
+        ticket: { id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' },
+        xpResult: { awarded: false, gainedExperience: 0, previousLevel: 0, currentLevel: 0, totalExperience: 0, levelUp: false },
+      }),
     );
 
     await updateTicketStatus(3, { status: 'IN_PROGRESS' });

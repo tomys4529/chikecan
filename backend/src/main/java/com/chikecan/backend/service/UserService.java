@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Locale;
 
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,5 +55,17 @@ public class UserService {
     return userRepository.findByRoleAndEnabledTrueOrderByNameAscIdAsc(Role.AGENT).stream()
         .map(AgentSummaryResponse::new)
         .toList();
+  }
+
+  /**
+   * ログイン中のユーザーをDBから再取得して返す。
+   * セッションに保持されたAppUserDetailsはログイン時点のスナップショットであり、
+   * XP獲得等の更新を反映しないため、/api/auth/meではこちらを使い常に最新値を返す。
+   */
+  @Transactional(readOnly = true)
+  public UserResponse getCurrentUser(Long userId) {
+    User user = userRepository.findById(userId)
+        .orElseThrow(() -> new UsernameNotFoundException("ユーザーが見つかりません"));
+    return new UserResponse(user);
   }
 }

@@ -24,6 +24,7 @@ import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
 import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.dto.TicketStatusUpdateResponse;
 import com.chikecan.backend.dto.TicketUpdateRequest;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.Ticket;
@@ -64,6 +65,13 @@ class TicketServiceTest {
   private User userWith(Long id, String name) {
     User user = new User(name, "user" + id + "@example.com", "hashed", Role.USER, true);
     ReflectionTestUtils.setField(user, "id", id);
+    return user;
+  }
+
+  private User userWith(Long id, String name, Role role, int experience) {
+    User user = new User(name, "user" + id + "@example.com", "hashed", role, true);
+    ReflectionTestUtils.setField(user, "id", id);
+    user.addExperience(experience);
     return user;
   }
 
@@ -228,18 +236,20 @@ class TicketServiceTest {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(2L, Role.AGENT);
     Ticket ticket = ticketWith(50L, TicketStatus.OPEN, 1L, 2L);
-    when(ticketRepository.findByIdAndAssigneeId(50L, 2L)).thenReturn(Optional.of(ticket));
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(50L, 2L)).thenReturn(Optional.of(ticket));
     when(userRepository.findAllById(any()))
         .thenReturn(List.of(userWith(1L, "依頼者太郎"), userWith(2L, "担当花子")));
 
     TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
     request.setStatus(TicketStatus.IN_PROGRESS);
 
-    TicketResponse response = ticketService.updateStatus(50L, request, principal);
+    TicketStatusUpdateResponse response = ticketService.updateStatus(50L, request, principal);
 
-    assertThat(response.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
-    assertThat(response.getRequesterName()).isEqualTo("依頼者太郎");
-    assertThat(response.getAssigneeName()).isEqualTo("担当花子");
+    assertThat(response.getTicket().getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
+    assertThat(response.getTicket().getRequesterName()).isEqualTo("依頼者太郎");
+    assertThat(response.getTicket().getAssigneeName()).isEqualTo("担当花子");
+    // IN_PROGRESSへの変更ではXP判定を行わない。
+    assertThat(response.getXpResult().isAwarded()).isFalse();
   }
 
   @Test
@@ -247,7 +257,7 @@ class TicketServiceTest {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(2L, Role.AGENT);
     Ticket ticket = ticketWith(51L, TicketStatus.OPEN, 1L, 2L);
-    when(ticketRepository.findByIdAndAssigneeId(51L, 2L)).thenReturn(Optional.of(ticket));
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(51L, 2L)).thenReturn(Optional.of(ticket));
 
     TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
     request.setStatus(TicketStatus.CLOSED);
@@ -261,7 +271,7 @@ class TicketServiceTest {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(9L, Role.ADMIN);
     Ticket ticket = ticketWith(52L, TicketStatus.CLOSED, 1L, 2L);
-    when(ticketRepository.findById(52L)).thenReturn(Optional.of(ticket));
+    when(ticketRepository.findByIdForUpdate(52L)).thenReturn(Optional.of(ticket));
 
     TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
     request.setStatus(TicketStatus.OPEN);
@@ -274,7 +284,7 @@ class TicketServiceTest {
   void 未担当または別担当のAGENTはTicketNotFoundExceptionになる() {
     ticketService = new TicketService(ticketRepository, userRepository);
     AppUserDetails principal = principalOf(3L, Role.AGENT);
-    when(ticketRepository.findByIdAndAssigneeId(60L, 3L)).thenReturn(Optional.empty());
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(60L, 3L)).thenReturn(Optional.empty());
 
     TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
     request.setStatus(TicketStatus.IN_PROGRESS);
@@ -453,5 +463,222 @@ class TicketServiceTest {
 
     assertThatThrownBy(() -> ticketService.updateContent(94L, updateRequest("t", "d", TicketPriority.LOW), principal))
         .isInstanceOf(TicketEditNotAllowedException.class);
+  }
+
+  // ===== AGENTのXP・レベル =====
+
+  private TicketStatusUpdateRequest resolveRequest() {
+    TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
+    request.setStatus(TicketStatus.RESOLVED);
+    return request;
+  }
+
+  @Test
+  void LOWチケットの初回RESOLVEDで10XP付与される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(200L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.LOW);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(200L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 0);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(200L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isTrue();
+    assertThat(response.getXpResult().getGainedExperience()).isEqualTo(10);
+    assertThat(agent.getExperience()).isEqualTo(10);
+    assertThat(ticket.isXpAwarded()).isTrue();
+  }
+
+  @Test
+  void MEDIUMチケットの初回RESOLVEDで20XP付与される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(201L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.MEDIUM);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(201L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 0);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(201L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().getGainedExperience()).isEqualTo(20);
+    assertThat(agent.getExperience()).isEqualTo(20);
+  }
+
+  @Test
+  void HIGHチケットの初回RESOLVEDで30XP付与される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(202L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.HIGH);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(202L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 0);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(202L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().getGainedExperience()).isEqualTo(30);
+    assertThat(agent.getExperience()).isEqualTo(30);
+  }
+
+  @Test
+  void 既存の累計XPへ加算される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(203L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.LOW);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(203L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 45);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(203L, resolveRequest(), principal);
+
+    assertThat(agent.getExperience()).isEqualTo(55);
+    assertThat(response.getXpResult().getTotalExperience()).isEqualTo(55);
+  }
+
+  @Test
+  void 累計XPが100に到達するとLevel2かつレベルアップと判定される() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(204L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.HIGH);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(204L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 70);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(204L, resolveRequest(), principal);
+
+    assertThat(agent.getExperience()).isEqualTo(100);
+    assertThat(agent.getLevel()).isEqualTo(2);
+    assertThat(response.getXpResult().getPreviousLevel()).isEqualTo(1);
+    assertThat(response.getXpResult().getCurrentLevel()).isEqualTo(2);
+    assertThat(response.getXpResult().isLevelUp()).isTrue();
+  }
+
+  @Test
+  void 累計120XPでLevel2かつレベル内20XPかつ次まで80XPになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(205L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "priority", TicketPriority.HIGH);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(205L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 90);
+    when(userRepository.findById(2L)).thenReturn(Optional.of(agent));
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    ticketService.updateStatus(205L, resolveRequest(), principal);
+
+    assertThat(agent.getExperience()).isEqualTo(120);
+    assertThat(agent.getLevel()).isEqualTo(2);
+    assertThat(agent.getCurrentLevelExperience()).isEqualTo(20);
+    assertThat(agent.getExperienceToNextLevel()).isEqualTo(80);
+  }
+
+  @Test
+  void 担当者未設定のチケットはXP付与されないがxpAwardedはtrueになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    Ticket ticket = ticketWith(206L, TicketStatus.IN_PROGRESS, 1L, null);
+    when(ticketRepository.findByIdForUpdate(206L)).thenReturn(Optional.of(ticket));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(206L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(ticket.isXpAwarded()).isTrue();
+    verify(userRepository, never()).findById(any());
+  }
+
+  @Test
+  void 担当者がUSERの場合はXP付与されない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    Ticket ticket = ticketWith(207L, TicketStatus.IN_PROGRESS, 1L, 5L);
+    when(ticketRepository.findByIdForUpdate(207L)).thenReturn(Optional.of(ticket));
+    User notAgent = userWith(5L, "USER担当", Role.USER, 0);
+    when(userRepository.findById(5L)).thenReturn(Optional.of(notAgent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(207L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(notAgent.getExperience()).isZero();
+    assertThat(ticket.isXpAwarded()).isTrue();
+  }
+
+  @Test
+  void 担当者がADMINの場合はXP付与されない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    Ticket ticket = ticketWith(208L, TicketStatus.IN_PROGRESS, 1L, 6L);
+    when(ticketRepository.findByIdForUpdate(208L)).thenReturn(Optional.of(ticket));
+    User adminAssignee = userWith(6L, "ADMIN担当", Role.ADMIN, 0);
+    when(userRepository.findById(6L)).thenReturn(Optional.of(adminAssignee));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(208L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(adminAssignee.getExperience()).isZero();
+  }
+
+  @Test
+  void RESOLVED以外への変更ではXP判定を行わない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    Ticket ticket = ticketWith(209L, TicketStatus.RESOLVED, 1L, 2L);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(209L, 2L)).thenReturn(Optional.of(ticket));
+    when(userRepository.findAllById(any())).thenReturn(List.of(userWith(2L, "担当AGENT", Role.AGENT, 0)));
+
+    TicketStatusUpdateRequest request = new TicketStatusUpdateRequest();
+    request.setStatus(TicketStatus.CLOSED);
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(209L, request, principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(ticket.isXpAwarded()).isFalse();
+    verify(userRepository, never()).findById(any());
+  }
+
+  @Test
+  void 一度RESOLVEDになったチケットを再度RESOLVEDにしても二重付与されない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+    // RESOLVED→IN_PROGRESSに一度戻った状態(xpAwardedはtrueのまま)を再現する。
+    Ticket ticket = ticketWith(210L, TicketStatus.IN_PROGRESS, 1L, 2L);
+    ReflectionTestUtils.setField(ticket, "xpAwarded", true);
+    when(ticketRepository.findByIdAndAssigneeIdForUpdate(210L, 2L)).thenReturn(Optional.of(ticket));
+    User agent = userWith(2L, "担当AGENT", Role.AGENT, 30);
+    when(userRepository.findAllById(any())).thenReturn(List.of(agent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(210L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(agent.getExperience()).isEqualTo(30);
+    verify(userRepository, never()).findById(any());
+  }
+
+  @Test
+  void XP判定済みのチケットは担当者を変更して再度RESOLVEDにしても再付与されない() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+    // 既にXP判定済み(元は別のAGENTが担当)のチケットが、担当者変更後にIN_PROGRESSへ戻り、
+    // 再びRESOLVEDにされた状況を再現する。
+    Ticket ticket = ticketWith(211L, TicketStatus.IN_PROGRESS, 1L, 8L);
+    ReflectionTestUtils.setField(ticket, "xpAwarded", true);
+    when(ticketRepository.findByIdForUpdate(211L)).thenReturn(Optional.of(ticket));
+    User newAgent = userWith(8L, "新担当AGENT", Role.AGENT, 0);
+    when(userRepository.findAllById(any())).thenReturn(List.of(newAgent));
+
+    TicketStatusUpdateResponse response = ticketService.updateStatus(211L, resolveRequest(), principal);
+
+    assertThat(response.getXpResult().isAwarded()).isFalse();
+    assertThat(newAgent.getExperience()).isZero();
+    verify(userRepository, never()).findById(any());
   }
 }

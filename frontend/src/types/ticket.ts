@@ -34,3 +34,17 @@ export interface TicketStatusUpdateRequest {
 export interface TicketAssigneeUpdateRequest {
   assigneeId: number | null;
 }
+
+export interface XpAwardResult {
+  awarded: boolean;
+  gainedExperience: number;
+  previousLevel: number;
+  currentLevel: number;
+  totalExperience: number;
+  levelUp: boolean;
+}
+
+export interface TicketStatusUpdateResponse {
+  ticket: TicketResponse;
+  xpResult: XpAwardResult;
+}

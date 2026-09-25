@@ -1,0 +1,271 @@
+.xp-celebration {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(90vw, 300px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #0b1130 0%, #182a63 55%, #4b2a8f 100%);
+  color: #eef2ff;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 12px 32px rgba(8, 12, 36, 0.45);
+  pointer-events: none;
+  animation:
+    xp-celebration-in 0.35s ease-out,
+    xp-celebration-out 0.4s ease-in 2.6s forwards;
+}
+
+.xp-celebration--level-up {
+  background: linear-gradient(135deg, #241238 0%, #3a1c6b 45%, #7a4b00 130%);
+  box-shadow:
+    0 0 0 1px rgba(250, 204, 21, 0.35),
+    0 12px 36px rgba(120, 72, 0, 0.45);
+}
+
+.xp-celebration__mascot {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  position: relative;
+  z-index: 1;
+}
+
+.xp-celebration__content {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.xp-celebration__gain {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #67e8f9;
+  animation: xp-celebration-pop 0.5s ease-out 0.15s both;
+}
+
+.xp-celebration--level-up .xp-celebration__gain {
+  color: #fde68a;
+  font-size: 16px;
+}
+
+.xp-celebration__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fde68a;
+  animation: xp-celebration-pop 0.45s ease-out both;
+}
+
+.xp-celebration__level {
+  margin: 2px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.xp-celebration__message {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: #f5d9a8;
+}
+
+/* 装飾用の光・星・紙吹雪。テキストを持たずaria-hiddenで読み上げ対象外にしている。 */
+.xp-celebration__fx {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.xp-celebration__star {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #fef08a;
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  opacity: 0;
+  animation: xp-celebration-star 1.4s ease-out 0.1s both;
+}
+
+.xp-celebration__star--1 {
+  top: 18%;
+  left: 20%;
+  animation-delay: 0.05s;
+}
+
+.xp-celebration__star--2 {
+  top: 60%;
+  left: 12%;
+  animation-delay: 0.2s;
+}
+
+.xp-celebration__star--3 {
+  top: 30%;
+  left: 82%;
+  animation-delay: 0.35s;
+}
+
+.xp-celebration__ring {
+  position: absolute;
+  top: 50%;
+  left: 22%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  border: 3px solid rgba(250, 204, 21, 0.8);
+  opacity: 0;
+  animation: xp-celebration-ring 1.1s ease-out 0.05s both;
+}
+
+.xp-celebration__confetti {
+  position: absolute;
+  top: -6px;
+  width: 6px;
+  height: 10px;
+  background: #f472b6;
+  opacity: 0;
+  animation: xp-celebration-confetti 1.6s ease-in both;
+}
+
+.xp-celebration__confetti--1 {
+  left: 20%;
+  background: #f472b6;
+  animation-delay: 0.1s;
+}
+
+.xp-celebration__confetti--2 {
+  left: 45%;
+  background: #60a5fa;
+  animation-delay: 0.25s;
+}
+
+.xp-celebration__confetti--3 {
+  left: 65%;
+  background: #34d399;
+  animation-delay: 0.05s;
+}
+
+.xp-celebration__confetti--4 {
+  left: 85%;
+  background: #fde68a;
+  animation-delay: 0.3s;
+}
+
+@keyframes xp-celebration-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes xp-celebration-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+@keyframes xp-celebration-pop {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes xp-celebration-star {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) translateY(6px);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.1) translateY(-18px);
+  }
+}
+
+@keyframes xp-celebration-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+
+@keyframes xp-celebration-confetti {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(70px) rotate(220deg);
+  }
+}
+
+@media (max-width: 640px) {
+  .xp-celebration {
+    width: min(88vw, 260px);
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+/* 動きを弱める設定では、大きな移動・回転・点滅・紙吹雪を抑え静的表示に近づける。
+   フェードイン・アウトの位置ずれと個々のkeyframesアニメーションを止め、
+   テキストと控えめな出現/消失だけを残す。 */
+@media (prefers-reduced-motion: reduce) {
+  .xp-celebration {
+    animation: xp-celebration-fade 0.2s ease-out, xp-celebration-fade-out 0.2s ease-in 2.8s forwards;
+  }
+
+  .xp-celebration__gain,
+  .xp-celebration__title {
+    animation: none;
+  }
+
+  .xp-celebration__star,
+  .xp-celebration__ring,
+  .xp-celebration__confetti {
+    display: none;
+  }
+}
+
+@keyframes xp-celebration-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes xp-celebration-fade-out {
+  to {
+    opacity: 0;
+  }
+}
