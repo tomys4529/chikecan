@@ -17,6 +17,7 @@ function renderDetailPage(path: string, fetchImpl: typeof fetch) {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<p>ログイン画面</p>} />
+          <Route path="/tickets" element={<p>チケット一覧画面</p>} />
           <Route element={<ProtectedRoute />}>
             <Route path="/tickets/:id" element={<TicketDetailPage />} />
           </Route>
@@ -875,6 +876,75 @@ describe('TicketDetailPage', () => {
       await resolveTicket();
 
       await waitFor(() => expect(screen.getByText('累計 30 XP')).toBeInTheDocument());
+    });
+  });
+
+  describe('チケット一覧へ戻るリンク', () => {
+    function renderWithRole(
+      role: 'USER' | 'AGENT' | 'ADMIN',
+      ticketOverrides: Partial<TicketResponse> = {},
+    ) {
+      return renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse(ticketOverrides)));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+    }
+
+    it('USERの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('USER');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('AGENTの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('AGENT');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('ADMINの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('ADMIN');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('リンクの遷移先は/ticketsである', async () => {
+      renderWithRole('ADMIN');
+
+      await screen.findByText('サンプルチケット');
+      const link = screen.getByRole('link', { name: '← チケット一覧へ戻る' });
+      expect(link).toHaveAttribute('href', '/tickets');
+    });
+
+    it('OPEN以外のステータスのチケットでも表示される', async () => {
+      renderWithRole('AGENT', { status: 'RESOLVED' });
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('担当者未設定のチケットでも表示される', async () => {
+      renderWithRole('ADMIN', { assigneeId: null, assigneeName: null });
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('リンクをクリックするとチケット一覧画面へ遷移する', async () => {
+      renderWithRole('USER');
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.click(screen.getByRole('link', { name: '← チケット一覧へ戻る' }));
+
+      expect(await screen.findByText('チケット一覧画面')).toBeInTheDocument();
     });
   });
 });
