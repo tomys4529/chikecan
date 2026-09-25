@@ -82,7 +82,7 @@ class UserServiceTest {
   }
 
   @Test
-  void listAgentsはRepositoryの結果をid名前メールアドレスのみのDTOへ変換する() {
+  void listAgentsはRepositoryの結果をid名前のみのDTOへ変換する() {
     userService = new UserService(userRepository, passwordEncoder);
 
     User agent = new User("鈴木一郎", "suzuki@example.com", "hashed-password", Role.AGENT, true);
@@ -94,7 +94,6 @@ class UserServiceTest {
     assertThat(result).hasSize(1);
     assertThat(result.get(0).getId()).isEqualTo(5L);
     assertThat(result.get(0).getName()).isEqualTo("鈴木一郎");
-    assertThat(result.get(0).getEmail()).isEqualTo("suzuki@example.com");
   }
 
   @Test

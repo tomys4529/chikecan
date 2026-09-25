@@ -32,7 +32,6 @@ export function agentSummary(overrides: Partial<AgentSummaryResponse> = {}): Age
   return {
     id: 2,
     name: '担当太郎',
-    email: 'agent@example.com',
     ...overrides,
   };
 }

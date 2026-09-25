@@ -395,7 +395,7 @@ describe('TicketDetailPage', () => {
         if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
         if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: null })));
         if (url.endsWith('/api/admin/agents')) {
-          return Promise.resolve(jsonResponse([agentSummary({ id: 3, name: '鈴木一郎', email: 'suzuki@example.com' })]));
+          return Promise.resolve(jsonResponse([agentSummary({ id: 3, name: '鈴木一郎' })]));
         }
         throw new Error(`unexpected fetch: ${url}`);
       });
@@ -403,7 +403,7 @@ describe('TicketDetailPage', () => {
       await screen.findByText('サンプルチケット');
       const select = (await screen.findByLabelText('担当者設定')) as HTMLSelectElement;
       const optionLabels = Array.from(select.options).map((option) => option.textContent);
-      expect(optionLabels).toEqual(['未割り当て', '鈴木一郎(suzuki@example.com)']);
+      expect(optionLabels).toEqual(['未割り当て', '鈴木一郎']);
     });
 
     it.each(['USER', 'AGENT'] as const)('%sには担当者設定フォームが表示されずAGENT一覧も取得されない', async (role) => {
@@ -427,7 +427,7 @@ describe('TicketDetailPage', () => {
         if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
         if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ assigneeId: 4 })));
         if (url.endsWith('/api/admin/agents')) {
-          return Promise.resolve(jsonResponse([agentSummary({ id: 4, name: '担当花子', email: 'hanako@example.com' })]));
+          return Promise.resolve(jsonResponse([agentSummary({ id: 4, name: '担当花子' })]));
         }
         throw new Error(`unexpected fetch: ${url}`);
       });
@@ -480,7 +480,7 @@ describe('TicketDetailPage', () => {
         if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
         if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'ADMIN' })));
         if (url.endsWith('/api/admin/agents')) {
-          return Promise.resolve(jsonResponse([agentSummary({ id: 9, name: '鈴木一郎', email: 'suzuki@example.com' })]));
+          return Promise.resolve(jsonResponse([agentSummary({ id: 9, name: '鈴木一郎' })]));
         }
         if (url.endsWith('/api/tickets/7/assignee') && method === 'PATCH') {
           patchBody = (init as RequestInit).body as string;
