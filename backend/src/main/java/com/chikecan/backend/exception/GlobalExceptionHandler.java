@@ -79,6 +79,12 @@ public class GlobalExceptionHandler {
     return build(HttpStatus.CONFLICT, ex.getMessage(), request);
   }
 
+  @ExceptionHandler(TicketEditNotAllowedException.class)
+  public ResponseEntity<ErrorResponse> handleTicketEditNotAllowed(TicketEditNotAllowedException ex,
+      HttpServletRequest request) {
+    return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+  }
+
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex,
       HttpServletRequest request) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTicket, getTicket, listTickets, updateTicketAssignee, updateTicketStatus } from './tickets';
+import { createTicket, getTicket, listTickets, updateTicket, updateTicketAssignee, updateTicketStatus } from './tickets';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -31,7 +31,7 @@ describe('api/tickets', () => {
   it('getTicketはGET /api/tickets/{id}を呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 5, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 5, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
     );
 
     await getTicket(5);
@@ -43,7 +43,7 @@ describe('api/tickets', () => {
   it('createTicketはPOST /api/ticketsをbody付きで呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 1, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }, 201),
+      jsonResponse({ id: 1, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }, 201),
     );
 
     await createTicket({ title: 't', description: 'd', priority: 'LOW' });
@@ -54,10 +54,27 @@ describe('api/tickets', () => {
     expect((init as RequestInit).body).toBe(JSON.stringify({ title: 't', description: 'd', priority: 'LOW' }));
   });
 
+  it('updateTicketはPATCH /api/tickets/{id}をタイトル・内容・優先度のみのbodyで呼ぶ', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: 1, title: '修正後', description: '修正後内容', status: 'OPEN', priority: 'HIGH', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
+    );
+
+    await updateTicket(1, { title: '修正後', description: '修正後内容', priority: 'HIGH' });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/tickets/1');
+    expect(String(url)).not.toContain('/api/tickets/1/');
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ title: '修正後', description: '修正後内容', priority: 'HIGH' }),
+    );
+  });
+
   it('updateTicketStatusはPATCH /api/tickets/{id}/statusを呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, assigneeId: 2, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'IN_PROGRESS', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketStatus(3, { status: 'IN_PROGRESS' });
@@ -71,7 +88,7 @@ describe('api/tickets', () => {
   it('updateTicketAssigneeはPATCH /api/tickets/{id}/assigneeを呼ぶ', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: 2, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: 2, assigneeName: '担当花子', createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketAssignee(3, { assigneeId: 2 });
@@ -85,7 +102,7 @@ describe('api/tickets', () => {
   it('updateTicketAssigneeはassigneeId:nullで担当解除を送信できる', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, assigneeId: null, createdAt: '', updatedAt: '' }),
+      jsonResponse({ id: 3, title: 't', description: 'd', status: 'OPEN', priority: 'LOW', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
     );
 
     await updateTicketAssignee(3, { assigneeId: null });
