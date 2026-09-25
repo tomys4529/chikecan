@@ -312,6 +312,12 @@ export function TicketDetailPage() {
             </button>
           </form>
         )}
+
+        <div className="ticket-detail__back">
+          <Link to="/tickets" className="back-link">
+            ← チケット一覧へ戻る
+          </Link>
+        </div>
       </div>
       <XpGainCelebration celebration={xpCelebration} onDismiss={() => setXpCelebration(null)} />
     </section>
