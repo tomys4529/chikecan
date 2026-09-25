@@ -14,18 +14,26 @@ public class TicketResponse {
   private final TicketStatus status;
   private final TicketPriority priority;
   private final Long requesterId;
+  private final String requesterName;
   private final Long assigneeId;
+  private final String assigneeName;
   private final Instant createdAt;
   private final Instant updatedAt;
 
-  public TicketResponse(Ticket ticket) {
+  /**
+   * requesterName・assigneeNameは呼び出し側(Service)で解決済みの値を渡す。
+   * Entity側にUserへの関連は持たせず、IDのみの設計を維持したまま表示名だけを付加する。
+   */
+  public TicketResponse(Ticket ticket, String requesterName, String assigneeName) {
     this.id = ticket.getId();
     this.title = ticket.getTitle();
     this.description = ticket.getDescription();
     this.status = ticket.getStatus();
     this.priority = ticket.getPriority();
     this.requesterId = ticket.getRequesterId();
+    this.requesterName = requesterName;
     this.assigneeId = ticket.getAssigneeId();
+    this.assigneeName = assigneeName;
     this.createdAt = ticket.getCreatedAt();
     this.updatedAt = ticket.getUpdatedAt();
   }
@@ -54,8 +62,16 @@ public class TicketResponse {
     return requesterId;
   }
 
+  public String getRequesterName() {
+    return requesterName;
+  }
+
   public Long getAssigneeId() {
     return assigneeId;
+  }
+
+  public String getAssigneeName() {
+    return assigneeName;
   }
 
   public Instant getCreatedAt() {

@@ -7,6 +7,7 @@ import { RegisterPage } from '../pages/RegisterPage';
 import { TicketListPage } from '../pages/TicketListPage';
 import { TicketCreatePage } from '../pages/TicketCreatePage';
 import { TicketDetailPage } from '../pages/TicketDetailPage';
+import { TicketEditPage } from '../pages/TicketEditPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 
 export function AppRoutes() {
@@ -22,6 +23,7 @@ export function AppRoutes() {
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route element={<UserOnlyRoute />}>
           <Route path="/tickets/new" element={<TicketCreatePage />} />
+          <Route path="/tickets/:id/edit" element={<TicketEditPage />} />
         </Route>
       </Route>
 

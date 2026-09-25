@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -125,7 +127,9 @@ class TicketControllerTest {
             .content(body))
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.requesterId").value(userId))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
         .andExpect(jsonPath("$.assigneeId").value(nullValue()))
+        .andExpect(jsonPath("$.assigneeName").value(nullValue()))
         .andExpect(jsonPath("$.status").value("OPEN"));
   }
 
@@ -249,6 +253,36 @@ class TicketControllerTest {
   }
 
   @Test
+  void 一覧レスポンスに依頼者名と担当者名が含まれる() throws Exception {
+    Ticket assigned = createTicket(userId, agentId, TicketStatus.OPEN);
+    Ticket unassigned = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+
+    MvcResult result = mockMvc.perform(get("/api/tickets").session(session))
+        .andExpect(status().isOk())
+        .andReturn();
+
+    tools.jackson.databind.JsonNode array = new tools.jackson.databind.ObjectMapper()
+        .readTree(result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+    tools.jackson.databind.JsonNode assignedNode = findById(array, assigned.getId());
+    tools.jackson.databind.JsonNode unassignedNode = findById(array, unassigned.getId());
+
+    assertThat(assignedNode.get("requesterName").asText()).isEqualTo("チケットUSER");
+    assertThat(assignedNode.get("assigneeName").asText()).isEqualTo("チケットAGENT");
+    assertThat(unassignedNode.get("requesterName").asText()).isEqualTo("チケットUSER");
+    assertThat(unassignedNode.get("assigneeName").isNull()).isTrue();
+  }
+
+  private tools.jackson.databind.JsonNode findById(tools.jackson.databind.JsonNode array, Long id) {
+    for (tools.jackson.databind.JsonNode node : array) {
+      if (node.get("id").asLong() == id) {
+        return node;
+      }
+    }
+    throw new AssertionError("id=" + id + "の要素が見つかりません");
+  }
+
+  @Test
   void 一覧はcreatedAt降順で返る() throws Exception {
     Ticket first = createTicket(userId, null, TicketStatus.OPEN);
     Thread.sleep(10);
@@ -310,6 +344,17 @@ class TicketControllerTest {
   }
 
   @Test
+  void チケット詳細レスポンスに依頼者名と担当者名が含まれる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+
+    mockMvc.perform(get("/api/tickets/" + ticket.getId()).session(session))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
+  }
+
+  @Test
   void 存在しないIDも同じ404になる() throws Exception {
     MockHttpSession session = loginAs(USER_EMAIL);
 
@@ -342,7 +387,9 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"status\":\"IN_PROGRESS\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+        .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
@@ -457,7 +504,9 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"assigneeId\":" + agentId + "}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.assigneeId").value(agentId));
+        .andExpect(jsonPath("$.assigneeId").value(agentId))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"))
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getAssigneeId()).isEqualTo(agentId);
@@ -524,7 +573,8 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"assigneeId\":null}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.assigneeId").value(nullValue()));
+        .andExpect(jsonPath("$.assigneeId").value(nullValue()))
+        .andExpect(jsonPath("$.assigneeName").value(nullValue()));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getAssigneeId()).isNull();
@@ -539,6 +589,206 @@ class TicketControllerTest {
             .session(session)
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"assigneeId\":" + agentId + "}"))
+        .andExpect(status().isForbidden());
+  }
+
+  // ===== チケット内容編集(USER本人・OPENのみ) =====
+
+  @Test
+  void USER本人は自分のOPENチケットのタイトル内容優先度を更新できる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.OPEN);
+    Instant beforeUpdatedAt = ticket.getUpdatedAt();
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    Thread.sleep(10);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"修正後タイトル\",\"description\":\"修正後内容\",\"priority\":\"HIGH\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.title").value("修正後タイトル"))
+        .andExpect(jsonPath("$.description").value("修正後内容"))
+        .andExpect(jsonPath("$.priority").value("HIGH"))
+        // 変更されない項目
+        .andExpect(jsonPath("$.requesterId").value(userId))
+        .andExpect(jsonPath("$.assigneeId").value(agentId))
+        .andExpect(jsonPath("$.status").value("OPEN"))
+        // 名前表示は維持される
+        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
+
+    Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
+    assertThat(reloaded.getTitle()).isEqualTo("修正後タイトル");
+    assertThat(reloaded.getDescription()).isEqualTo("修正後内容");
+    assertThat(reloaded.getPriority()).isEqualTo(TicketPriority.HIGH);
+    assertThat(reloaded.getRequesterId()).isEqualTo(userId);
+    assertThat(reloaded.getAssigneeId()).isEqualTo(agentId);
+    assertThat(reloaded.getStatus()).isEqualTo(TicketStatus.OPEN);
+    assertThat(reloaded.getCreatedAt()).isEqualTo(ticket.getCreatedAt());
+    assertThat(reloaded.getUpdatedAt()).isAfter(beforeUpdatedAt);
+  }
+
+  @Test
+  void 他のUSERのチケットは更新できず404になる() throws Exception {
+    Ticket ticket = createTicket(otherUserId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.status").value(404))
+        .andExpect(jsonPath("$.message").value("チケットが見つかりません"));
+  }
+
+  @Test
+  void AGENTはチケット編集で403になる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(AGENT_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.status").value(403))
+        .andExpect(jsonPath("$.message").value("権限がありません"));
+  }
+
+  @Test
+  void ADMINはチケット編集で403になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.status").value(403));
+  }
+
+  @Test
+  void 未認証のチケット編集は401になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    // CSRF検証は認証チェックより先に行われるため、CSRFトークン自体は正しく付与したうえで
+    // ログインしていない状態を検証する(そうしないとCSRF不足による403と区別できない)。
+    MockHttpSession session = new MockHttpSession();
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.status").value(401));
+  }
+
+  @Test
+  void 存在しないチケットの編集は404になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/999999")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.message").value("チケットが見つかりません"));
+  }
+
+  @Test
+  void IN_PROGRESSのチケットは編集できず409になる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.IN_PROGRESS);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value(409))
+        .andExpect(jsonPath("$.message").value("OPEN以外のチケットは編集できません"));
+  }
+
+  @Test
+  void RESOLVEDのチケットは編集できず409になる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.RESOLVED);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value(409));
+  }
+
+  @Test
+  void CLOSEDのチケットは編集できず409になる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.CLOSED);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value(409));
+  }
+
+  @Test
+  void チケット編集の不正入力は400になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"\",\"description\":\"\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.status").value(400));
+  }
+
+  @Test
+  void CSRFなしのチケット編集は403になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"内容\",\"priority\":\"LOW\"}"))
         .andExpect(status().isForbidden());
   }
 

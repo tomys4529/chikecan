@@ -8,12 +8,20 @@ export interface TicketResponse {
   status: TicketStatus;
   priority: TicketPriority;
   requesterId: number;
+  requesterName: string;
   assigneeId: number | null;
+  assigneeName: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface TicketCreateRequest {
+  title: string;
+  description: string;
+  priority: TicketPriority;
+}
+
+export interface TicketUpdateRequest {
   title: string;
   description: string;
   priority: TicketPriority;
