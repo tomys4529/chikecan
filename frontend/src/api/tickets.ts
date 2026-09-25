@@ -4,6 +4,7 @@ import type {
   TicketCreateRequest,
   TicketResponse,
   TicketStatusUpdateRequest,
+  TicketStatusUpdateResponse,
   TicketUpdateRequest,
 } from '../types/ticket';
 
@@ -29,8 +30,8 @@ export function updateTicket(id: number, request: TicketUpdateRequest): Promise<
   });
 }
 
-export function updateTicketStatus(id: number, request: TicketStatusUpdateRequest): Promise<TicketResponse> {
-  return apiFetch<TicketResponse>(`/api/tickets/${id}/status`, {
+export function updateTicketStatus(id: number, request: TicketStatusUpdateRequest): Promise<TicketStatusUpdateResponse> {
+  return apiFetch<TicketStatusUpdateResponse>(`/api/tickets/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify(request),
   });

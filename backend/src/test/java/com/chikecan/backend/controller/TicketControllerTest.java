@@ -82,7 +82,11 @@ class TicketControllerTest {
   }
 
   private Ticket createTicket(Long requesterId, Long assigneeId, TicketStatus status) {
-    Ticket ticket = new Ticket("直接作成", "内容", status, TicketPriority.MEDIUM, requesterId, assigneeId);
+    return createTicket(requesterId, assigneeId, status, TicketPriority.MEDIUM);
+  }
+
+  private Ticket createTicket(Long requesterId, Long assigneeId, TicketStatus status, TicketPriority priority) {
+    Ticket ticket = new Ticket("直接作成", "内容", status, priority, requesterId, assigneeId);
     return ticketRepository.saveAndFlush(ticket);
   }
 
@@ -387,9 +391,11 @@ class TicketControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"status\":\"IN_PROGRESS\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
-        .andExpect(jsonPath("$.requesterName").value("チケットUSER"))
-        .andExpect(jsonPath("$.assigneeName").value("チケットAGENT"));
+        .andExpect(jsonPath("$.ticket.status").value("IN_PROGRESS"))
+        .andExpect(jsonPath("$.ticket.requesterName").value("チケットUSER"))
+        .andExpect(jsonPath("$.ticket.assigneeName").value("チケットAGENT"))
+        // IN_PROGRESSへの変更ではXPは付与されない。
+        .andExpect(jsonPath("$.xpResult.awarded").value(false));
 
     Ticket reloaded = ticketRepository.findById(ticket.getId()).orElseThrow();
     assertThat(reloaded.getStatus()).isEqualTo(TicketStatus.IN_PROGRESS);
@@ -812,5 +818,140 @@ class TicketControllerTest {
 
   private static org.hamcrest.Matcher<Iterable<? extends Number>> everyItemEquals(Long expected) {
     return org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is(expected.intValue()));
+  }
+
+  // ===== AGENTのXP・レベル =====
+
+  @Test
+  void MEDIUMチケットの初回RESOLVEDでステータス更新レスポンスにXP結果が含まれる() throws Exception {
+    Ticket ticket = createTicket(userId, agentId, TicketStatus.IN_PROGRESS, TicketPriority.MEDIUM);
+    MockHttpSession session = loginAs(AGENT_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"status\":\"RESOLVED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.ticket.status").value("RESOLVED"))
+        .andExpect(jsonPath("$.xpResult.awarded").value(true))
+        .andExpect(jsonPath("$.xpResult.gainedExperience").value(20));
+  }
+
+  @Test
+  void 担当者未設定のチケットをADMINがRESOLVEDにするとXP非付与のレスポンスになる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.IN_PROGRESS, TicketPriority.HIGH);
+    MockHttpSession session = loginAs(ADMIN_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"status\":\"RESOLVED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.xpResult.awarded").value(false))
+        .andExpect(jsonPath("$.xpResult.gainedExperience").value(0))
+        .andExpect(jsonPath("$.xpResult.levelUp").value(false));
+  }
+
+  @Test
+  void 再度RESOLVEDにしてもステータス更新APIレベルで二重付与されない() throws Exception {
+    String dedicatedAgentEmail = "ticket-xp-double-resolve-agent@example.com";
+    Long dedicatedAgentId = createIfAbsent(dedicatedAgentEmail, "二重付与確認AGENT", Role.AGENT);
+    Ticket ticket = createTicket(userId, dedicatedAgentId, TicketStatus.IN_PROGRESS, TicketPriority.LOW);
+    MockHttpSession session = loginAs(dedicatedAgentEmail);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(session).cookie(csrf.cookie()).header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.xpResult.awarded").value(true));
+
+    CsrfCredentials csrf2 = obtainCsrfToken(session);
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(session).cookie(csrf2.cookie()).header("X-XSRF-TOKEN", csrf2.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_PROGRESS\"}"))
+        .andExpect(status().isOk());
+
+    CsrfCredentials csrf3 = obtainCsrfToken(session);
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(session).cookie(csrf3.cookie()).header("X-XSRF-TOKEN", csrf3.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.xpResult.awarded").value(false));
+
+    User reloadedAgent = userRepository.findById(dedicatedAgentId).orElseThrow();
+    assertThat(reloadedAgent.getExperience()).isEqualTo(10);
+  }
+
+  @Test
+  void AGENTでログインしauthMeからXPとレベル情報を取得できる() throws Exception {
+    String dedicatedAgentEmail = "ticket-xp-auth-me-agent@example.com";
+    Long dedicatedAgentId = createIfAbsent(dedicatedAgentEmail, "auth-me確認AGENT", Role.AGENT);
+    Ticket ticket = createTicket(userId, dedicatedAgentId, TicketStatus.IN_PROGRESS, TicketPriority.HIGH);
+    MockHttpSession resolveSession = loginAs(dedicatedAgentEmail);
+    CsrfCredentials csrf = obtainCsrfToken(resolveSession);
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(resolveSession).cookie(csrf.cookie()).header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+        .andExpect(status().isOk());
+
+    User reloadedAgent = userRepository.findById(dedicatedAgentId).orElseThrow();
+    int expectedExperience = reloadedAgent.getExperience();
+    assertThat(expectedExperience).isEqualTo(30);
+
+    MockHttpSession meSession = loginAs(dedicatedAgentEmail);
+    mockMvc.perform(get("/api/auth/me").session(meSession))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.experience").value(expectedExperience))
+        .andExpect(jsonPath("$.level").value(reloadedAgent.getLevel()))
+        .andExpect(jsonPath("$.currentLevelExperience").value(reloadedAgent.getCurrentLevelExperience()))
+        .andExpect(jsonPath("$.experienceToNextLevel").value(reloadedAgent.getExperienceToNextLevel()))
+        .andExpect(jsonPath("$.experienceProgressPercentage").value(reloadedAgent.getExperienceProgressPercentage()));
+  }
+
+  @Test
+  void 同時に2件のRESOLVED更新リクエストが来てもXPは1回しか付与されない() throws Exception {
+    String concurrencyAgentEmail = "ticket-xp-concurrency-agent@example.com";
+    Long concurrencyAgentId = createIfAbsent(concurrencyAgentEmail, "同時実行AGENT", Role.AGENT);
+    Ticket ticket = createTicket(userId, concurrencyAgentId, TicketStatus.IN_PROGRESS, TicketPriority.HIGH);
+
+    MockHttpSession sessionA = loginAs(concurrencyAgentEmail);
+    CsrfCredentials csrfA = obtainCsrfToken(sessionA);
+    MockHttpSession sessionB = loginAs(concurrencyAgentEmail);
+    CsrfCredentials csrfB = obtainCsrfToken(sessionB);
+
+    java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    java.util.concurrent.Callable<Integer> requestA = () -> mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(sessionA).cookie(csrfA.cookie()).header("X-XSRF-TOKEN", csrfA.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+        .andReturn().getResponse().getStatus();
+    java.util.concurrent.Callable<Integer> requestB = () -> mockMvc.perform(patch("/api/tickets/" + ticket.getId() + "/status")
+            .session(sessionB).cookie(csrfB.cookie()).header("X-XSRF-TOKEN", csrfB.token())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
+        .andReturn().getResponse().getStatus();
+
+    java.util.List<java.util.concurrent.Future<Integer>> futures = executor.invokeAll(java.util.List.of(requestA, requestB));
+    java.util.List<Integer> statuses = new java.util.ArrayList<>();
+    for (java.util.concurrent.Future<Integer> future : futures) {
+      statuses.add(future.get());
+    }
+    executor.shutdown();
+
+    // 悲観ロックにより2件のリクエストは直列化される。先にロックを獲得した側は200、
+    // 後からロックを獲得した側はチケットが既にRESOLVEDになっているため
+    // 「RESOLVED→RESOLVED」という許可されない遷移として409になる。
+    // どちらの順序で実行されても、成功は必ずどちらか1件だけになる。
+    assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+
+    User reloadedAgent = userRepository.findById(concurrencyAgentId).orElseThrow();
+    // 同時に2回RESOLVEDへの更新が送られても、悲観ロックにより直列化され、
+    // XPはHIGHの30のみ1回だけ加算される(60にはならない)。
+    assertThat(reloadedAgent.getExperience()).isEqualTo(30);
   }
 }

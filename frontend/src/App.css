@@ -343,6 +343,41 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* チケット詳細カード内の「一覧へ戻る」導線。主要操作(更新する等)より
+   目立たない副次的なリンクとして、カード左下に控えめに配置する。 */
+.ticket-detail__back {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px; /* スマートフォンでタップしやすい高さを確保する */
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 0.15s;
+}
+
+.back-link:hover {
+  background: rgba(47, 93, 159, 0.08);
+}
+
+@media (max-width: 640px) {
+  .back-link {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 /* ===== 404 ===== */
 .not-found {
   text-align: center;

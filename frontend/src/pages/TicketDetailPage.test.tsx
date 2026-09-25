@@ -1,12 +1,13 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { ProtectedRoute } from '../routes/ProtectedRoute';
 import { TicketDetailPage } from './TicketDetailPage';
+import { XpPanel } from '../components/XpPanel';
 import { agentSummary, csrfResponse, errorResponse, jsonResponse, testUser } from '../test-utils/apiMocks';
-import type { TicketResponse } from '../types/ticket';
+import type { TicketResponse, TicketStatusUpdateResponse, XpAwardResult } from '../types/ticket';
 
 function renderDetailPage(path: string, fetchImpl: typeof fetch) {
   vi.stubGlobal('fetch', vi.fn(fetchImpl));
@@ -16,6 +17,7 @@ function renderDetailPage(path: string, fetchImpl: typeof fetch) {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<p>ログイン画面</p>} />
+          <Route path="/tickets" element={<p>チケット一覧画面</p>} />
           <Route element={<ProtectedRoute />}>
             <Route path="/tickets/:id" element={<TicketDetailPage />} />
           </Route>
@@ -40,6 +42,17 @@ function ticketResponse(overrides: Partial<TicketResponse> = {}): TicketResponse
     updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
   };
+}
+
+function xpNotAwarded(): XpAwardResult {
+  return { awarded: false, gainedExperience: 0, previousLevel: 0, currentLevel: 0, totalExperience: 0, levelUp: false };
+}
+
+function statusUpdateResponse(
+  ticketOverrides: Partial<TicketResponse> = {},
+  xpResult: XpAwardResult = xpNotAwarded(),
+): TicketStatusUpdateResponse {
+  return { ticket: ticketResponse(ticketOverrides), xpResult };
 }
 
 describe('TicketDetailPage', () => {
@@ -182,7 +195,7 @@ describe('TicketDetailPage', () => {
       if (url.endsWith('/api/tickets/7/status') && method === 'PATCH') {
         patchCalls += 1;
         return Promise.resolve(
-          jsonResponse(ticketResponse({ status: 'IN_PROGRESS', updatedAt: '2026-02-02T00:00:00Z' })),
+          jsonResponse(statusUpdateResponse({ status: 'IN_PROGRESS', updatedAt: '2026-02-02T00:00:00Z' })),
         );
       }
       if (url.endsWith('/api/tickets/7') && method === 'GET') {
@@ -238,7 +251,7 @@ describe('TicketDetailPage', () => {
       if (url.endsWith('/api/tickets/7/status') && method === 'PATCH') {
         patchCalls += 1;
         return new Promise<Response>((resolve) => {
-          setTimeout(() => resolve(jsonResponse(ticketResponse({ status: 'IN_PROGRESS' }))), 30);
+          setTimeout(() => resolve(jsonResponse(statusUpdateResponse({ status: 'IN_PROGRESS' }))), 30);
         });
       }
       if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse({ status: 'OPEN' })));
@@ -706,6 +719,232 @@ describe('TicketDetailPage', () => {
       await user.click(screen.getByRole('button', { name: '担当者を更新する' }));
 
       await waitFor(() => expect(patchBody).toBe(JSON.stringify({ assigneeId: null })));
+    });
+  });
+
+  describe('XP獲得演出', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function mockResolveWithXp(xpResult: XpAwardResult) {
+      return (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init && init.method) ?? 'GET';
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'AGENT' })));
+        if (url.endsWith('/api/tickets/7/status') && method === 'PATCH') {
+          return Promise.resolve(jsonResponse(statusUpdateResponse({ status: 'RESOLVED' }, xpResult)));
+        }
+        if (url.endsWith('/api/tickets/7')) {
+          return Promise.resolve(jsonResponse(ticketResponse({ status: 'IN_PROGRESS' })));
+        }
+        throw new Error(`unexpected fetch: ${url} ${method}`);
+      };
+    }
+
+    async function resolveTicket(user: ReturnType<typeof userEvent.setup> = userEvent.setup()) {
+      await screen.findByText('サンプルチケット');
+      await user.selectOptions(screen.getByLabelText('ステータス変更'), 'RESOLVED');
+      await user.click(screen.getByRole('button', { name: '更新する' }));
+    }
+
+    it('通常のXP獲得時は+30XPが表示されLEVEL UPは表示されない', async () => {
+      renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: true, gainedExperience: 30, previousLevel: 1, currentLevel: 1, totalExperience: 30, levelUp: false }),
+      );
+
+      await resolveTicket();
+
+      expect(await screen.findByText('+30 XP')).toBeInTheDocument();
+      expect(screen.queryByText('LEVEL UP!')).not.toBeInTheDocument();
+    });
+
+    it('レベルアップ時はLEVEL UP!とおめでとう!が表示される', async () => {
+      renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: true, gainedExperience: 30, previousLevel: 1, currentLevel: 2, totalExperience: 100, levelUp: true }),
+      );
+
+      await resolveTicket();
+
+      expect(await screen.findByText('LEVEL UP!')).toBeInTheDocument();
+      expect(screen.getByText('おめでとう!')).toBeInTheDocument();
+      expect(screen.getByText('Level 2')).toBeInTheDocument();
+      expect(screen.getByText('+30 XP')).toBeInTheDocument();
+    });
+
+    it('通常獲得とレベルアップでは適用されるクラスが異なる', async () => {
+      renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: true, gainedExperience: 10, previousLevel: 1, currentLevel: 1, totalExperience: 10, levelUp: false }),
+      );
+
+      await resolveTicket();
+      const normalCelebration = (await screen.findByText('+10 XP')).closest('.xp-celebration');
+      expect(normalCelebration).toHaveClass('xp-celebration--normal');
+      expect(normalCelebration).not.toHaveClass('xp-celebration--level-up');
+    });
+
+    it('XP非付与時は演出が表示されない', async () => {
+      renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: false, gainedExperience: 0, previousLevel: 0, currentLevel: 0, totalExperience: 0, levelUp: false }),
+      );
+
+      await resolveTicket();
+
+      await waitFor(() => expect(screen.getByText('解決済み')).toBeInTheDocument());
+      expect(screen.queryByText(/XP$/)).not.toBeInTheDocument();
+    });
+
+    it('約3秒後に演出が自動的に消える', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: true, gainedExperience: 20, previousLevel: 1, currentLevel: 1, totalExperience: 20, levelUp: false }),
+      );
+
+      await resolveTicket(user);
+      expect(await screen.findByText('+20 XP')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      expect(screen.queryByText('+20 XP')).not.toBeInTheDocument();
+    });
+
+    it('演出が消えた後に再レンダリングしても演出は再表示されない', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const view = renderDetailPage(
+        '/tickets/7',
+        mockResolveWithXp({ awarded: true, gainedExperience: 20, previousLevel: 1, currentLevel: 1, totalExperience: 20, levelUp: false }),
+      );
+
+      await resolveTicket(user);
+      expect(await screen.findByText('+20 XP')).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.queryByText('+20 XP')).not.toBeInTheDocument();
+
+      // propsを変えずに再レンダリングを強制しても、演出は再表示されない。
+      view.rerender(
+        <MemoryRouter initialEntries={['/tickets/7']}>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<p>ログイン画面</p>} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/tickets/:id" element={<TicketDetailPage />} />
+              </Route>
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+
+      expect(screen.queryByText('+20 XP')).not.toBeInTheDocument();
+    });
+
+    it('XP獲得後にXPパネルが最新値へ更新される', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          mockResolveWithXp({ awarded: true, gainedExperience: 30, previousLevel: 1, currentLevel: 1, totalExperience: 30, levelUp: false }),
+        ),
+      );
+
+      render(
+        <MemoryRouter initialEntries={['/tickets/7']}>
+          <AuthProvider>
+            <XpPanel />
+            <Routes>
+              <Route path="/login" element={<p>ログイン画面</p>} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/tickets/:id" element={<TicketDetailPage />} />
+              </Route>
+            </Routes>
+          </AuthProvider>
+        </MemoryRouter>,
+      );
+
+      await screen.findByText('累計 0 XP');
+      await resolveTicket();
+
+      await waitFor(() => expect(screen.getByText('累計 30 XP')).toBeInTheDocument());
+    });
+  });
+
+  describe('チケット一覧へ戻るリンク', () => {
+    function renderWithRole(
+      role: 'USER' | 'AGENT' | 'ADMIN',
+      ticketOverrides: Partial<TicketResponse> = {},
+    ) {
+      return renderDetailPage('/tickets/7', (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+        if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role })));
+        if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse(ticketOverrides)));
+        if (url.endsWith('/api/admin/agents')) return Promise.resolve(jsonResponse([]));
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+    }
+
+    it('USERの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('USER');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('AGENTの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('AGENT');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('ADMINの詳細画面に「チケット一覧へ戻る」が表示される', async () => {
+      renderWithRole('ADMIN');
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('リンクの遷移先は/ticketsである', async () => {
+      renderWithRole('ADMIN');
+
+      await screen.findByText('サンプルチケット');
+      const link = screen.getByRole('link', { name: '← チケット一覧へ戻る' });
+      expect(link).toHaveAttribute('href', '/tickets');
+    });
+
+    it('OPEN以外のステータスのチケットでも表示される', async () => {
+      renderWithRole('AGENT', { status: 'RESOLVED' });
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('担当者未設定のチケットでも表示される', async () => {
+      renderWithRole('ADMIN', { assigneeId: null, assigneeName: null });
+
+      await screen.findByText('サンプルチケット');
+      expect(screen.getByRole('link', { name: '← チケット一覧へ戻る' })).toBeInTheDocument();
+    });
+
+    it('リンクをクリックするとチケット一覧画面へ遷移する', async () => {
+      renderWithRole('USER');
+
+      const user = userEvent.setup();
+      await screen.findByText('サンプルチケット');
+      await user.click(screen.getByRole('link', { name: '← チケット一覧へ戻る' }));
+
+      expect(await screen.findByText('チケット一覧画面')).toBeInTheDocument();
     });
   });
 });

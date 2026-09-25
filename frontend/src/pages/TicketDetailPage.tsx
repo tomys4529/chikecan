@@ -12,7 +12,10 @@ import { LoadingIndicator } from '../components/LoadingIndicator';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { TicketStatusBadge } from '../components/TicketStatusBadge';
 import { TicketPriorityBadge } from '../components/TicketPriorityBadge';
+import { XpGainCelebration } from '../components/XpGainCelebration';
+import type { XpCelebrationData } from '../components/XpGainCelebration';
 import { STATUS_LABELS } from '../utils/ticketLabels';
+import { currentLevelExperience, experienceProgressPercentage, experienceToNextLevel } from '../utils/experienceLevel';
 import { NotFoundPage } from './NotFoundPage';
 
 function parseTicketId(idParam: string | undefined): number | null {
@@ -27,8 +30,9 @@ function parseTicketId(idParam: string | undefined): number | null {
 export function TicketDetailPage() {
   const { id: idParam } = useParams();
   const ticketId = parseTicketId(idParam);
-  const { user, invalidateSession } = useAuth();
+  const { user, invalidateSession, applyExperienceUpdate } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+  const isAgent = user?.role === 'AGENT';
 
   const [ticket, setTicket] = useState<TicketResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -48,6 +52,8 @@ export function TicketDetailPage() {
   const [assigneeUpdating, setAssigneeUpdating] = useState(false);
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
   const assigneeUpdatingRef = useRef(false);
+
+  const [xpCelebration, setXpCelebration] = useState<XpCelebrationData | null>(null);
 
   useEffect(() => {
     if (ticketId === null) {
@@ -154,10 +160,30 @@ export function TicketDetailPage() {
     updatingRef.current = true;
     setUpdating(true);
     try {
-      const updated = await updateTicketStatus(ticket.id, { status: nextStatus });
+      const result = await updateTicketStatus(ticket.id, { status: nextStatus });
       // GETで取り直さず、PATCHのレスポンスをそのまま画面へ反映する。
-      setTicket(updated);
+      setTicket(result.ticket);
       setNextStatus('');
+
+      // AGENT本人がXPを獲得した場合だけ、XPパネルの更新と獲得演出を行う。
+      // ADMINが他人の担当チケットを解決した場合もXPは付与されうるが、
+      // その演出はXPを得た本人(AGENT)の画面でのみ表示されるべきであり、
+      // 操作したADMIN自身の画面には表示しない。
+      if (isAgent && result.xpResult.awarded) {
+        const totalExperience = result.xpResult.totalExperience;
+        applyExperienceUpdate({
+          experience: totalExperience,
+          level: result.xpResult.currentLevel,
+          currentLevelExperience: currentLevelExperience(totalExperience),
+          experienceToNextLevel: experienceToNextLevel(totalExperience),
+          experienceProgressPercentage: experienceProgressPercentage(totalExperience),
+        });
+        setXpCelebration({
+          gainedExperience: result.xpResult.gainedExperience,
+          levelUp: result.xpResult.levelUp,
+          currentLevel: result.xpResult.currentLevel,
+        });
+      }
     } catch (error) {
       if (isUnauthorized(error)) {
         invalidateSession();
@@ -286,7 +312,14 @@ export function TicketDetailPage() {
             </button>
           </form>
         )}
+
+        <div className="ticket-detail__back">
+          <Link to="/tickets" className="back-link">
+            ← チケット一覧へ戻る
+          </Link>
+        </div>
       </div>
+      <XpGainCelebration celebration={xpCelebration} onDismiss={() => setXpCelebration(null)} />
     </section>
   );
 }

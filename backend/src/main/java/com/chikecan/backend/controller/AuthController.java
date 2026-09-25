@@ -90,6 +90,8 @@ public class AuthController {
 
   @GetMapping("/me")
   public UserResponse me(@AuthenticationPrincipal AppUserDetails principal) {
-    return new UserResponse(principal);
+    // セッションのAppUserDetailsはログイン時点のスナップショットのため、
+    // XP等の最新値を返すためDBから再取得する。
+    return userService.getCurrentUser(principal.getId());
   }
 }

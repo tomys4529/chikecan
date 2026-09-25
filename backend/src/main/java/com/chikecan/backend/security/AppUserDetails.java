@@ -24,6 +24,7 @@ public class AppUserDetails implements UserDetails {
   private final Role role;
   private final boolean enabled;
   private final Instant createdAt;
+  private final int experience;
 
   public AppUserDetails(User user) {
     this.id = user.getId();
@@ -33,6 +34,7 @@ public class AppUserDetails implements UserDetails {
     this.role = user.getRole();
     this.enabled = user.isEnabled();
     this.createdAt = user.getCreatedAt();
+    this.experience = user.getExperience();
   }
 
   public Long getId() {
@@ -49,6 +51,10 @@ public class AppUserDetails implements UserDetails {
 
   public Instant getCreatedAt() {
     return createdAt;
+  }
+
+  public int getExperience() {
+    return experience;
   }
 
   @Override

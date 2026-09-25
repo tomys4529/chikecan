@@ -1,0 +1,92 @@
+/*
+ * 確定済みPNG(mascot-idle/xp/level-up)自体は加工しない。
+ * ここでは画像の表示・上下移動・拡大縮小・わずかな回転・発光のみをCSSで行う。
+ */
+.ticket-mascot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+.ticket-mascot--idle {
+  animation: ticket-mascot-breathe 3.2s ease-in-out infinite;
+}
+
+.ticket-mascot--xp {
+  animation: ticket-mascot-jump 0.9s ease-in-out 2,
+    ticket-mascot-glow-cyan 1.8s ease-in-out infinite;
+}
+
+.ticket-mascot--level-up {
+  animation: ticket-mascot-jump-high 1s ease-in-out 3,
+    ticket-mascot-glow-gold 1.2s ease-in-out infinite;
+}
+
+@keyframes ticket-mascot-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.02);
+  }
+}
+
+@keyframes ticket-mascot-jump {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  30% {
+    transform: translateY(-14px) rotate(-4deg) scale(1.05);
+  }
+  55% {
+    transform: translateY(0) rotate(3deg) scale(1);
+  }
+}
+
+@keyframes ticket-mascot-jump-high {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  35% {
+    transform: translateY(-28px) rotate(-6deg) scale(1.12);
+  }
+  60% {
+    transform: translateY(0) rotate(5deg) scale(1.02);
+  }
+}
+
+@keyframes ticket-mascot-glow-cyan {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.35));
+  }
+  50% {
+    filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.75));
+  }
+}
+
+@keyframes ticket-mascot-glow-gold {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 6px rgba(250, 204, 21, 0.45));
+  }
+  50% {
+    filter: drop-shadow(0 0 18px rgba(250, 204, 21, 0.85));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket-mascot--idle,
+  .ticket-mascot--xp,
+  .ticket-mascot--level-up {
+    animation: none;
+    filter: none;
+    transform: none;
+  }
+}
