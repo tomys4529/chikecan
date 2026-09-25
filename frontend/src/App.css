@@ -166,8 +166,22 @@
   align-self: flex-start;
 }
 
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 @media (max-width: 640px) {
   .form .btn {
+    align-self: stretch;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .btn {
     align-self: stretch;
   }
 }

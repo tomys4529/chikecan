@@ -24,6 +24,7 @@ import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
 import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.dto.TicketUpdateRequest;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.Ticket;
 import com.chikecan.backend.entity.TicketPriority;
@@ -31,6 +32,7 @@ import com.chikecan.backend.entity.TicketStatus;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.InvalidAssigneeException;
 import com.chikecan.backend.exception.InvalidStatusTransitionException;
+import com.chikecan.backend.exception.TicketEditNotAllowedException;
 import com.chikecan.backend.exception.TicketNotFoundException;
 import com.chikecan.backend.repository.TicketRepository;
 import com.chikecan.backend.repository.UserRepository;
@@ -60,7 +62,7 @@ class TicketServiceTest {
   }
 
   private User userWith(Long id, String name) {
-    User user = new User(name, "user" + id + "@example.com", "hashed", Role.AGENT, true);
+    User user = new User(name, "user" + id + "@example.com", "hashed", Role.USER, true);
     ReflectionTestUtils.setField(user, "id", id);
     return user;
   }
@@ -379,5 +381,77 @@ class TicketServiceTest {
     // 担当者検証で既に取得済みのUserを再利用するため、findByIdは(30L用の1回のみ)。
     // findAllByIdはこのメソッド内では使用しない(1件ずつの直接取得で十分なため)。
     verify(userRepository, never()).findAllById(any());
+  }
+
+  // ===== チケット内容編集(USER本人・OPENのみ) =====
+
+  private TicketUpdateRequest updateRequest(String title, String description, TicketPriority priority) {
+    TicketUpdateRequest request = new TicketUpdateRequest();
+    request.setTitle(title);
+    request.setDescription(description);
+    request.setPriority(priority);
+    return request;
+  }
+
+  @Test
+  void USER本人は自分のOPENチケットのタイトル内容優先度を更新できる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(1L, Role.USER);
+    Ticket ticket = ticketWith(90L, TicketStatus.OPEN, 1L, 2L);
+    when(ticketRepository.findByIdAndRequesterId(90L, 1L)).thenReturn(Optional.of(ticket));
+    when(userRepository.findAllById(any()))
+        .thenReturn(List.of(userWith(1L, "依頼者太郎"), userWith(2L, "担当花子")));
+
+    TicketResponse response = ticketService.updateContent(90L, updateRequest("新タイトル", "新内容", TicketPriority.HIGH), principal);
+
+    assertThat(response.getTitle()).isEqualTo("新タイトル");
+    assertThat(response.getDescription()).isEqualTo("新内容");
+    assertThat(response.getPriority()).isEqualTo(TicketPriority.HIGH);
+    // requesterId・assigneeId・status・createdAtは変更されない。
+    assertThat(response.getRequesterId()).isEqualTo(1L);
+    assertThat(response.getAssigneeId()).isEqualTo(2L);
+    assertThat(response.getStatus()).isEqualTo(TicketStatus.OPEN);
+    assertThat(response.getRequesterName()).isEqualTo("依頼者太郎");
+    assertThat(response.getAssigneeName()).isEqualTo("担当花子");
+  }
+
+  @Test
+  void 他人のチケットは更新できずTicketNotFoundExceptionになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(1L, Role.USER);
+    when(ticketRepository.findByIdAndRequesterId(91L, 1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> ticketService.updateContent(91L, updateRequest("t", "d", TicketPriority.LOW), principal))
+        .isInstanceOf(TicketNotFoundException.class);
+  }
+
+  @Test
+  void AGENTが直接呼び出してもAccessDeniedExceptionになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(2L, Role.AGENT);
+
+    assertThatThrownBy(() -> ticketService.updateContent(92L, updateRequest("t", "d", TicketPriority.LOW), principal))
+        .isInstanceOf(AccessDeniedException.class);
+    verify(ticketRepository, never()).findByIdAndRequesterId(any(), any());
+  }
+
+  @Test
+  void ADMINが直接呼び出してもAccessDeniedExceptionになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(9L, Role.ADMIN);
+
+    assertThatThrownBy(() -> ticketService.updateContent(93L, updateRequest("t", "d", TicketPriority.LOW), principal))
+        .isInstanceOf(AccessDeniedException.class);
+  }
+
+  @Test
+  void OPEN以外のチケットはTicketEditNotAllowedExceptionになる() {
+    ticketService = new TicketService(ticketRepository, userRepository);
+    AppUserDetails principal = principalOf(1L, Role.USER);
+    Ticket ticket = ticketWith(94L, TicketStatus.IN_PROGRESS, 1L, null);
+    when(ticketRepository.findByIdAndRequesterId(94L, 1L)).thenReturn(Optional.of(ticket));
+
+    assertThatThrownBy(() -> ticketService.updateContent(94L, updateRequest("t", "d", TicketPriority.LOW), principal))
+        .isInstanceOf(TicketEditNotAllowedException.class);
   }
 }

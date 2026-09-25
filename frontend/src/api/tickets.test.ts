@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTicket, getTicket, listTickets, updateTicketAssignee, updateTicketStatus } from './tickets';
+import { createTicket, getTicket, listTickets, updateTicket, updateTicketAssignee, updateTicketStatus } from './tickets';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -52,6 +52,23 @@ describe('api/tickets', () => {
     expect(String(url)).toContain('/api/tickets');
     expect((init as RequestInit).method).toBe('POST');
     expect((init as RequestInit).body).toBe(JSON.stringify({ title: 't', description: 'd', priority: 'LOW' }));
+  });
+
+  it('updateTicketはPATCH /api/tickets/{id}をタイトル・内容・優先度のみのbodyで呼ぶ', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(
+      jsonResponse({ id: 1, title: '修正後', description: '修正後内容', status: 'OPEN', priority: 'HIGH', requesterId: 1, requesterName: '依頼太郎', assigneeId: null, assigneeName: null, createdAt: '', updatedAt: '' }),
+    );
+
+    await updateTicket(1, { title: '修正後', description: '修正後内容', priority: 'HIGH' });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/tickets/1');
+    expect(String(url)).not.toContain('/api/tickets/1/');
+    expect((init as RequestInit).method).toBe('PATCH');
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ title: '修正後', description: '修正後内容', priority: 'HIGH' }),
+    );
   });
 
   it('updateTicketStatusはPATCH /api/tickets/{id}/statusを呼ぶ', async () => {

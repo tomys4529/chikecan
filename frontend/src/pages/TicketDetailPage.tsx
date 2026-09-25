@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getTicket, updateTicketAssignee, updateTicketStatus } from '../api/tickets';
 import { listAgents } from '../api/adminUsers';
@@ -194,10 +194,19 @@ export function TicketDetailPage() {
     }
   }
 
+  const canEdit = user?.role === 'USER' && user.id === ticket.requesterId && ticket.status === 'OPEN';
+
   return (
     <section className="page">
       <div className="card">
-        <h1>{ticket.title}</h1>
+        <div className="page-header">
+          <h1>{ticket.title}</h1>
+          {canEdit && (
+            <Link to={`/tickets/${ticket.id}/edit`} className="btn btn--secondary">
+              編集する
+            </Link>
+          )}
+        </div>
         <p>{ticket.description}</p>
         <dl className="ticket-detail__info">
           <dt>ステータス</dt>

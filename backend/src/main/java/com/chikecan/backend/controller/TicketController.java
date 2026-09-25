@@ -17,6 +17,7 @@ import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
 import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.dto.TicketUpdateRequest;
 import com.chikecan.backend.security.AppUserDetails;
 import com.chikecan.backend.service.TicketService;
 
@@ -47,6 +48,13 @@ public class TicketController {
   @GetMapping("/api/tickets/{id}")
   public TicketResponse detail(@PathVariable Long id, @AuthenticationPrincipal AppUserDetails principal) {
     return ticketService.getDetail(id, principal);
+  }
+
+  @PreAuthorize("hasRole('USER')")
+  @PatchMapping("/api/tickets/{id}")
+  public TicketResponse update(@PathVariable Long id, @Valid @RequestBody TicketUpdateRequest request,
+      @AuthenticationPrincipal AppUserDetails principal) {
+    return ticketService.updateContent(id, request, principal);
   }
 
   @PreAuthorize("hasAnyRole('AGENT','ADMIN')")

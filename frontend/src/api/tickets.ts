@@ -4,6 +4,7 @@ import type {
   TicketCreateRequest,
   TicketResponse,
   TicketStatusUpdateRequest,
+  TicketUpdateRequest,
 } from '../types/ticket';
 
 export function listTickets(): Promise<TicketResponse[]> {
@@ -17,6 +18,13 @@ export function getTicket(id: number): Promise<TicketResponse> {
 export function createTicket(request: TicketCreateRequest): Promise<TicketResponse> {
   return apiFetch<TicketResponse>('/api/tickets', {
     method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function updateTicket(id: number, request: TicketUpdateRequest): Promise<TicketResponse> {
+  return apiFetch<TicketResponse>(`/api/tickets/${id}`, {
+    method: 'PATCH',
     body: JSON.stringify(request),
   });
 }

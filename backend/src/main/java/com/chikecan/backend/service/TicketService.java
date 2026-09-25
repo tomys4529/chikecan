@@ -14,12 +14,14 @@ import com.chikecan.backend.dto.TicketAssigneeUpdateRequest;
 import com.chikecan.backend.dto.TicketCreateRequest;
 import com.chikecan.backend.dto.TicketResponse;
 import com.chikecan.backend.dto.TicketStatusUpdateRequest;
+import com.chikecan.backend.dto.TicketUpdateRequest;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.Ticket;
 import com.chikecan.backend.entity.TicketStatus;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.InvalidAssigneeException;
 import com.chikecan.backend.exception.InvalidStatusTransitionException;
+import com.chikecan.backend.exception.TicketEditNotAllowedException;
 import com.chikecan.backend.exception.TicketNotFoundException;
 import com.chikecan.backend.repository.TicketRepository;
 import com.chikecan.backend.repository.UserRepository;
@@ -105,6 +107,33 @@ public class TicketService {
         .orElse(null);
     String assigneeName = assignee != null ? assignee.getName() : null;
     return new TicketResponse(ticket, requesterName, assigneeName);
+  }
+
+  /**
+   * USER本人が自分のOPENチケットのタイトル・内容・優先度のみを編集する。
+   * Controllerの@PreAuthorize("hasRole('USER')")だけに依存せず、
+   * Service側でもロール・所有者・状態を再確認する(フロントエンドのボタン非表示は認可の代替にならないため)。
+   */
+  @Transactional
+  public TicketResponse updateContent(Long id, TicketUpdateRequest request, AppUserDetails principal) {
+    if (principal.getRole() != Role.USER) {
+      throw new AccessDeniedException("権限がありません");
+    }
+
+    // ID+所有者を同時に判定することで、「存在しない」と「他人のチケット」を
+    // 区別不能にし(IDOR対策)、どちらも同じ404にする。
+    Ticket ticket = ticketRepository.findByIdAndRequesterId(id, principal.getId()).orElseThrow(this::notFound);
+
+    if (ticket.getStatus() != TicketStatus.OPEN) {
+      throw new TicketEditNotAllowedException("OPEN以外のチケットは編集できません");
+    }
+
+    ticket.setTitle(request.getTitle());
+    ticket.setDescription(request.getDescription());
+    ticket.setPriority(request.getPriority());
+    // requesterId・assigneeId・status・createdAtには一切触れない。
+
+    return toResponse(ticket);
   }
 
   private Ticket findAccessible(Long id, AppUserDetails principal) {
