@@ -1,10 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { RegisterPage } from './RegisterPage';
-import { LoginPage } from './LoginPage';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -99,7 +98,53 @@ describe('RegisterPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('このメールアドレスは既に登録されています');
   });
 
-  it('登録成功後にログイン画面へ遷移し完了メッセージを表示する', async () => {
+  it('登録成功後は自動ログインせず確認メール案内画面を表示する', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let registerCalled = false;
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        registerCalled = true;
+        return Promise.resolve(
+          jsonResponse({ message: '確認メールの送信を受け付けました。メール内のリンクから本登録を完了してください。' }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/register']}>
+        <AuthProvider>
+          <RegisterPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'new@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    expect(registerCalled).toBe(true);
+    expect(
+      await screen.findByText('確認メールを送信しました。メール内のリンクから本登録を完了してください。'),
+    ).toBeInTheDocument();
+    // 登録フォームは表示されなくなる(即ログイン画面へも遷移しない)。
+    expect(screen.queryByRole('button', { name: '登録する' })).not.toBeInTheDocument();
+  });
+
+  it('登録成功後の案内画面には登録したメールアドレスが入った再送フォームが表示される', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation((input) => {
       const url = String(input);
@@ -112,8 +157,97 @@ describe('RegisterPage', () => {
         );
       }
       if (url.endsWith('/api/auth/register')) {
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/register']}>
+        <AuthProvider>
+          <RegisterPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'prefill@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await screen.findByRole('button', { name: '認証メールを再送' });
+    expect(screen.getByLabelText('メールアドレス')).toHaveValue('prefill@example.com');
+  });
+
+  it('確認メール案内画面で再送ボタンを押すと再送APIを呼び一般化されたメッセージを表示する', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let resendCalledWithEmail: string | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
         return Promise.resolve(
-          jsonResponse({ id: 1, name: '山田太郎', email: 'new@example.com', role: 'USER', enabled: true, createdAt: '2026-01-01T00:00:00Z' }, 201),
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      if (url.endsWith('/api/auth/resend-verification')) {
+        resendCalledWithEmail = JSON.parse((init as RequestInit).body as string).email;
+        return Promise.resolve(jsonResponse({ message: '対象のアカウントが確認できた場合、認証メールを送信します。' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/register']}>
+        <AuthProvider>
+          <RegisterPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'resend-from-register@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await user.click(await screen.findByRole('button', { name: '認証メールを再送' }));
+
+    expect(await screen.findByText('対象のアカウントが確認できた場合、認証メールを送信します。')).toBeInTheDocument();
+    expect(resendCalledWithEmail).toBe('resend-from-register@example.com');
+  });
+
+  it('確認メール案内画面の再送でサーバーエラーが返るとエラーメッセージを表示する', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      if (url.endsWith('/api/auth/resend-verification')) {
+        return Promise.resolve(
+          jsonResponse(
+            { status: 400, error: 'Bad Request', message: 'メールアドレスの形式が正しくありません', path: '/api/auth/resend-verification', timestamp: '2026-01-01T00:00:00Z' },
+            400,
+          ),
         );
       }
       throw new Error(`unexpected fetch: ${url}`);
@@ -123,22 +257,21 @@ describe('RegisterPage', () => {
     render(
       <MemoryRouter initialEntries={['/register']}>
         <AuthProvider>
-          <Routes>
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/login" element={<LoginPage />} />
-          </Routes>
+          <RegisterPage />
         </AuthProvider>
       </MemoryRouter>,
     );
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
     await user.type(screen.getByLabelText('氏名'), '山田太郎');
-    await user.type(screen.getByLabelText('メールアドレス'), 'new@example.com');
+    await user.type(screen.getByLabelText('メールアドレス'), 'resend-error@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
     await user.click(screen.getByRole('button', { name: '登録する' }));
 
-    expect(await screen.findByText('登録が完了しました。ログインしてください。')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '認証メールを再送' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('メールアドレスの形式が正しくありません');
   });
 
   it.each([

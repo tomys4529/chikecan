@@ -33,6 +33,19 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface VerifyEmailRequest {
+  token: string;
+}
+
+export interface ResendVerificationRequest {
+  email: string;
+}
+
+/** message文字列のみを返す軽量なAPIレスポンス(register/verify-email/resend-verification共通)。 */
+export interface MessageResponse {
+  message: string;
+}
+
 export interface CsrfTokenResponse {
   token: string;
   headerName: string;
