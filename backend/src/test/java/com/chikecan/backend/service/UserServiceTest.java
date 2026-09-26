@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -67,12 +68,15 @@ class UserServiceTest {
   @Mock
   private EmailChangeMailService emailChangeMailService;
 
+  @Mock
+  private SessionInvalidationService sessionInvalidationService;
+
   private UserService userService;
 
   private UserService newService() {
     return new UserService(userRepository, pendingRegistrationRepository, passwordResetTokenRepository,
         emailChangeRequestRepository, passwordEncoder, verificationMailService, passwordResetMailService,
-        emailChangeMailService);
+        emailChangeMailService, sessionInvalidationService);
   }
 
   private RegisterRequest requestOf(String familyName, String givenName, String email, String password) {
@@ -575,6 +579,8 @@ class UserServiceTest {
     assertThat(user.getPasswordHash()).isEqualTo("new-hashed-value");
     verify(userRepository).save(user);
     verify(passwordResetTokenRepository).delete(token);
+    // パスワードリセット完了後、対象ユーザーの既存セッションを全て失効させる。
+    verify(sessionInvalidationService).invalidateAllSessionsForUser(4L);
   }
 
   @Test
@@ -587,6 +593,7 @@ class UserServiceTest {
         .isInstanceOf(InvalidPasswordResetTokenException.class);
 
     verify(userRepository, never()).save(any());
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(any());
   }
 
   @Test
@@ -603,6 +610,7 @@ class UserServiceTest {
 
     verify(userRepository, never()).save(any());
     verify(passwordResetTokenRepository, never()).delete(any());
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(any());
   }
 
   @Test
@@ -642,6 +650,8 @@ class UserServiceTest {
 
     assertThat(user.getPasswordHash()).isEqualTo("new-hashed-value");
     verify(userRepository).save(user);
+    // パスワード変更成功後、対象ユーザーの既存セッション(操作中のセッションを含む)を全て失効させる。
+    verify(sessionInvalidationService).invalidateAllSessionsForUser(50L);
   }
 
   @Test
@@ -657,6 +667,7 @@ class UserServiceTest {
 
     assertThat(user.getPasswordHash()).isEqualTo("old-hash");
     verify(userRepository, never()).save(any());
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(any());
   }
 
   @Test
@@ -671,6 +682,40 @@ class UserServiceTest {
         .isInstanceOf(SamePasswordException.class);
 
     verify(userRepository, never()).save(any());
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(any());
+  }
+
+  @Test
+  void DB更新が失敗した場合はセッションを失効しない() {
+    userService = newService();
+    User user = userOf(53L, "失敗太郎", "db-failure@example.com", "old-hash");
+
+    when(userRepository.findById(53L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("OldPassw0rd1!", "old-hash")).thenReturn(true);
+    when(passwordEncoder.encode("NewPassw0rd1!")).thenReturn("new-hashed-value");
+    when(userRepository.save(user)).thenThrow(new DataIntegrityViolationException("db error"));
+
+    assertThatThrownBy(() -> userService.changePassword(53L, "OldPassw0rd1!", "NewPassw0rd1!"))
+        .isInstanceOf(DataIntegrityViolationException.class);
+
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(any());
+  }
+
+  @Test
+  void 他ユーザーのuserIdではセッション失効が呼ばれない() {
+    userService = newService();
+    User userA = userOf(54L, "対象太郎", "target-user@example.com", "hash-a");
+    User userB = userOf(55L, "他人花子", "other-user@example.com", "hash-b");
+
+    when(userRepository.findById(54L)).thenReturn(Optional.of(userA));
+    when(passwordEncoder.matches("OldPassw0rd1!", "hash-a")).thenReturn(true);
+    when(passwordEncoder.encode("NewPassw0rd1!")).thenReturn("new-hashed-value");
+
+    userService.changePassword(54L, "OldPassw0rd1!", "NewPassw0rd1!");
+
+    verify(sessionInvalidationService).invalidateAllSessionsForUser(54L);
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(55L);
+    verify(sessionInvalidationService, never()).invalidateAllSessionsForUser(userB.getId());
   }
 
   // ===== メールアドレス変更申請 =====

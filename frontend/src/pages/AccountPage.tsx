@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { changePassword, requestEmailChange } from '../api/auth';
 import { ApiError } from '../api/client';
@@ -36,17 +37,18 @@ export function AccountPage() {
 }
 
 function ChangePasswordForm() {
+  const { invalidateSession } = useAuth();
+  const navigate = useNavigate();
+
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newPasswordConfirm, setNewPasswordConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
-    setSuccessMessage(null);
 
     if (!currentPassword || !newPassword || !newPasswordConfirm) {
       setErrorMessage('全ての項目を入力してください');
@@ -67,14 +69,15 @@ function ChangePasswordForm() {
 
     setSubmitting(true);
     try {
-      const result = await changePassword({ currentPassword, newPassword });
-      setSuccessMessage(result.message);
-      setCurrentPassword('');
-      setNewPassword('');
-      setNewPasswordConfirm('');
+      await changePassword({ currentPassword, newPassword });
+      // パスワード変更成功時、サーバー側で対象ユーザーの既存セッション(この操作中の
+      // セッションを含む)が全て失効させられるため、フロント側も直ちにログイン状態を
+      // クリアしてログイン画面へ遷移させる(サーバーへの再確認や/api/auth/logout
+      // 呼び出しは不要。次回リクエストを待たず、このタイミングで確実に遷移させる)。
+      invalidateSession();
+      navigate('/login', { replace: true, state: { passwordChanged: true } });
     } catch (error) {
       setErrorMessage(error instanceof ApiError ? error.message : 'パスワードの変更に失敗しました。時間をおいて再度お試しください。');
-    } finally {
       setSubmitting(false);
     }
   }
@@ -117,7 +120,6 @@ function ChangePasswordForm() {
           />
         </div>
         {errorMessage && <ErrorMessage message={errorMessage} />}
-        {successMessage && <p role="status">{successMessage}</p>}
         <button type="submit" className="btn btn--primary" disabled={submitting}>
           {submitting ? '変更中...' : 'パスワードを変更'}
         </button>
