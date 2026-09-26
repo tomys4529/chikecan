@@ -2,71 +2,72 @@ package com.chikecan.backend.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 @ExtendWith(MockitoExtension.class)
 class PasswordResetMailServiceTest {
 
   @Mock
-  private ObjectProvider<JavaMailSender> mailSenderProvider;
-
-  @Mock
-  private JavaMailSender mailSender;
+  private ResendMailClient resendMailClient;
 
   @Test
-  void mailEnabledがfalseの場合はJavaMailSenderを一切使わない() {
+  void mailEnabledがfalseの場合はResendMailClientを一切使わない() {
     PasswordResetMailService service = new PasswordResetMailService(
-        mailSenderProvider, false, "no-reply@chikecan.local", "http://localhost:5173");
+        resendMailClient, false, "no-reply@chikecan.local", "http://localhost:5173");
 
     service.sendPasswordResetEmail("user@example.com", "raw-token");
 
-    verify(mailSenderProvider, never()).getObject();
+    verify(resendMailClient, never()).send(anyString(), anyString(), anyString(), anyString());
   }
 
   @Test
   void mailEnabledがtrueの場合は宛先送信元本文URLを含むメールを送信する() {
-    when(mailSenderProvider.getObject()).thenReturn(mailSender);
     PasswordResetMailService service = new PasswordResetMailService(
-        mailSenderProvider, true, "no-reply@chikecan.local", "http://localhost:5173");
+        resendMailClient, true, "no-reply@chikecan.local", "http://localhost:5173");
 
     service.sendPasswordResetEmail("user@example.com", "raw-token-value");
 
-    ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
-    verify(mailSender).send(captor.capture());
-    SimpleMailMessage sent = captor.getValue();
+    ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
+    verify(resendMailClient).send(
+        eq("user@example.com"), eq("no-reply@chikecan.local"),
+        eq("【chikecan】パスワード再設定のご案内"), textCaptor.capture());
 
-    assertThat(sent.getTo()).containsExactly("user@example.com");
-    assertThat(sent.getFrom()).isEqualTo("no-reply@chikecan.local");
-    assertThat(sent.getText()).contains("http://localhost:5173/reset-password?token=raw-token-value");
+    assertThat(textCaptor.getValue()).contains("http://localhost:5173/reset-password?token=raw-token-value");
   }
 
   /**
-   * メール送信失敗時にrequestPasswordResetの@Transactionalがrollbackされないようにするための
-   * 要件。ここで例外を伝播させないことを検証する
-   * (呼び出し元のUserServiceはこのメソッドが例外を投げない前提で実装されている)。
+   * ResendMailClientをモックへ差し替えず、実際のHTTP呼び出し失敗(5xx)を
+   * MockRestServiceServerで再現し、その結果がPasswordResetMailServiceの呼び出し元まで
+   * 伝播しないことをエンドツーエンドで確認する
+   * (呼び出し元のUserService.requestPasswordResetは@Transactionalであり、
+   * ここで例外が伝播すると意図せずtoken保存がrollbackされてしまう)。
    */
   @Test
   void メール送信が失敗しても例外を伝播させない() {
-    when(mailSenderProvider.getObject()).thenReturn(mailSender);
-    doThrow(new MailSendException("smtp接続に失敗しました")).when(mailSender).send(any(SimpleMailMessage.class));
+    RestClient.Builder builder = RestClient.builder();
+    MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    ResendMailClient realResendMailClient = new ResendMailClient(builder, "test-api-key");
+    server.expect(requestTo("https://api.resend.com/emails")).andRespond(withServerError());
+
     PasswordResetMailService service = new PasswordResetMailService(
-        mailSenderProvider, true, "no-reply@chikecan.local", "http://localhost:5173");
+        realResendMailClient, true, "no-reply@chikecan.local", "http://localhost:5173");
 
     assertThatCode(() -> service.sendPasswordResetEmail("user@example.com", "raw-token"))
         .doesNotThrowAnyException();
+
+    server.verify();
   }
 }
