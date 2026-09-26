@@ -375,7 +375,7 @@ erDiagram
     USERS ||--o| EMAIL_CHANGE_REQUESTS : "user_id"
     USERS {
         bigint id PK
-        varchar email UK
+        varchar email
         varchar role
         varchar name_format
     }
@@ -388,23 +388,23 @@ erDiagram
     }
     PENDING_REGISTRATIONS {
         bigint id PK
-        varchar email UK
-        varchar token_hash UK
+        varchar email
+        varchar token_hash
     }
     PASSWORD_RESET_TOKENS {
         bigint id PK
-        bigint user_id FK UK
-        varchar token_hash UK
+        bigint user_id FK
+        varchar token_hash
     }
     EMAIL_CHANGE_REQUESTS {
         bigint id PK
-        bigint user_id FK UK
-        varchar new_email UK
-        varchar token_hash UK
+        bigint user_id FK
+        varchar new_email
+        varchar token_hash
     }
 ```
 
-図には関連と主要カラムのみを示しています。残りのカラム（`enabled`・`experience`・`priority`・`xp_awarded`・`family_name`・`given_name`・`middle_name`など）は、直後の表と各テーブルの用途説明を参照してください。
+図には関連・PK/FKと主要カラムのみを示しています。GitHub上のMermaidで確実に描画できるよう、UNIQUE制約などの詳細な制約は図から外しています。`email`（`users`・`pending_registrations`）・`token_hash`（`pending_registrations`・`password_reset_tokens`・`email_change_requests`）・`user_id`（`password_reset_tokens`・`email_change_requests`）・`new_email`（`email_change_requests`）にはいずれもUNIQUE制約があり、詳細は直後の表とマイグレーションファイルを参照してください。残りのカラム（`enabled`・`experience`・`priority`・`xp_awarded`・`family_name`・`given_name`・`middle_name`など）についても同様です。
 
 | テーブル | 用途 |
 | --- | --- |
