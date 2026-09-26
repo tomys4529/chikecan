@@ -96,6 +96,21 @@ describe('LoginPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('メールアドレスまたはパスワードが正しくありません');
   });
 
+  it('passwordChanged状態で遷移した場合はパスワード変更後の案内メッセージを表示する', async () => {
+    setupInitialUnauthenticated();
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/login', state: { passwordChanged: true } }]}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
+    expect(await screen.findByText('パスワードを変更しました。再度ログインしてください。')).toBeInTheDocument();
+  });
+
   it('パスワードを忘れた方のリンクが表示される', async () => {
     setupInitialUnauthenticated();
 

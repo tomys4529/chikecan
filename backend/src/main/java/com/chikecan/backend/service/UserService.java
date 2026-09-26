@@ -10,6 +10,8 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
@@ -56,6 +58,7 @@ public class UserService {
   private final VerificationMailService verificationMailService;
   private final PasswordResetMailService passwordResetMailService;
   private final EmailChangeMailService emailChangeMailService;
+  private final SessionInvalidationService sessionInvalidationService;
 
   public UserService(UserRepository userRepository,
       PendingRegistrationRepository pendingRegistrationRepository,
@@ -64,7 +67,8 @@ public class UserService {
       PasswordEncoder passwordEncoder,
       VerificationMailService verificationMailService,
       PasswordResetMailService passwordResetMailService,
-      EmailChangeMailService emailChangeMailService) {
+      EmailChangeMailService emailChangeMailService,
+      SessionInvalidationService sessionInvalidationService) {
     this.userRepository = userRepository;
     this.pendingRegistrationRepository = pendingRegistrationRepository;
     this.passwordResetTokenRepository = passwordResetTokenRepository;
@@ -73,6 +77,7 @@ public class UserService {
     this.verificationMailService = verificationMailService;
     this.passwordResetMailService = passwordResetMailService;
     this.emailChangeMailService = emailChangeMailService;
+    this.sessionInvalidationService = sessionInvalidationService;
   }
 
   /**
@@ -216,6 +221,8 @@ public class UserService {
    * メール内リンクのtokenを検証し、成功した場合のみ新しいパスワードへ更新する。
    * token検索・パスワード更新・token削除を同一トランザクションで行い、
    * 使用済み・期限切れのtokenでは絶対に更新できないようにする。
+   * パスワードリセットはアカウント侵害時の回復操作として使われるため、成功時は
+   * 対象ユーザーの既存セッションを全て失効させ、他端末・他ブラウザも再ログインを必須にする。
    */
   @Transactional
   public void confirmPasswordReset(String rawToken, String newPassword) {
@@ -234,11 +241,15 @@ public class UserService {
     userRepository.save(user);
     // 削除によりtokenは再利用できなくなる。
     passwordResetTokenRepository.delete(resetToken);
+
+    invalidateSessionsAfterCommit(user.getId());
   }
 
   /**
    * ログイン中ユーザー自身によるパスワード変更。現在のパスワードの一致を必須とし、
    * 新しいパスワードが現在のパスワードと同じ場合は拒否する。
+   * 成功時は対象ユーザーの既存セッション(操作中のセッションを含む)を全て失効させ、
+   * 他端末・他ブラウザも含めて再ログインを必須にする。
    */
   @Transactional
   public void changePassword(Long userId, String currentPassword, String newPassword) {
@@ -254,6 +265,29 @@ public class UserService {
 
     user.setPasswordHash(passwordEncoder.encode(newPassword));
     userRepository.save(user);
+
+    invalidateSessionsAfterCommit(userId);
+  }
+
+  /**
+   * パスワード更新のDB commitが確実に成功した後にのみ、対象ユーザーのセッションを
+   * 失効させる。トランザクション同期が有効(実際に@Transactionalプロキシ経由で
+   * 呼ばれている)場合はafterCommitへ登録し、rollback時は失効処理自体を行わない
+   * (password更新の失敗とセッション失効の不整合を防ぐ)。トランザクション同期が
+   * 有効でない場合(テスト等でこのメソッドが直接呼ばれる場合)は、rollbackの概念が
+   * 存在しないためその場で即時実行する。
+   */
+  private void invalidateSessionsAfterCommit(Long userId) {
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override
+        public void afterCommit() {
+          sessionInvalidationService.invalidateAllSessionsForUser(userId);
+        }
+      });
+    } else {
+      sessionInvalidationService.invalidateAllSessionsForUser(userId);
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ package com.chikecan.backend.security;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -105,6 +106,28 @@ public class AppUserDetails implements UserDetails {
   @Override
   public boolean isCredentialsNonExpired() {
     return true;
+  }
+
+  /**
+   * SessionRegistryは principal(このクラスのインスタンス)をMapのキーとして扱う。
+   * ログインのたびにDBから新しく生成される別インスタンスであっても、同一ユーザーの
+   * 複数セッションを正しく1人分としてまとめられるよう、idのみに基づく同一性にする
+   * (email変更後もidは不変のため、email変更の前後で対象ユーザーを見失わない)。
+   */
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (!(obj instanceof AppUserDetails other)) {
+      return false;
+    }
+    return Objects.equals(id, other.id);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hashCode(id);
   }
 
   @Override

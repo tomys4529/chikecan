@@ -7,12 +7,14 @@ import { ErrorMessage } from '../components/ErrorMessage';
 
 interface LocationState {
   justRegistered?: boolean;
+  passwordChanged?: boolean;
 }
 
 export function LoginPage() {
   const { login } = useAuth();
   const location = useLocation();
   const justRegistered = (location.state as LocationState | null)?.justRegistered ?? false;
+  const passwordChanged = (location.state as LocationState | null)?.passwordChanged ?? false;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -45,6 +47,11 @@ export function LoginPage() {
         {justRegistered && (
           <p role="status" className="notice">
             登録が完了しました。ログインしてください。
+          </p>
+        )}
+        {passwordChanged && (
+          <p role="status" className="notice">
+            パスワードを変更しました。再度ログインしてください。
           </p>
         )}
         <form onSubmit={handleSubmit} noValidate className="form">
