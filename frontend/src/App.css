@@ -134,6 +134,27 @@
   width: 100%;
 }
 
+/*
+ * ラジオボタン(例: 氏名の入力形式)用。
+ * 上の.form-field inputルール(width:100%等、通常のテキスト入力向けの指定)が
+ * type="radio"のinputにも適用され、ラジオボタンが引き伸ばされてラベルとの
+ * 対応関係が分かりにくくなる問題を防ぐため、ここで明示的に上書きする。
+ */
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.radio-option input[type='radio'] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 0;
+}
+
 .form-field input:disabled,
 .form-field select:disabled,
 .form-field textarea:disabled {
