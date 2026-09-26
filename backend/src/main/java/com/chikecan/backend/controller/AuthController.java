@@ -1,9 +1,8 @@
 package com.chikecan.backend.controller;
 
 import java.util.Locale;
+import java.util.Map;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -23,7 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.chikecan.backend.dto.CsrfTokenResponse;
 import com.chikecan.backend.dto.LoginRequest;
 import com.chikecan.backend.dto.RegisterRequest;
+import com.chikecan.backend.dto.ResendVerificationRequest;
 import com.chikecan.backend.dto.UserResponse;
+import com.chikecan.backend.dto.VerifyEmailRequest;
 import com.chikecan.backend.exception.InvalidCredentialsException;
 import com.chikecan.backend.security.AppUserDetails;
 import com.chikecan.backend.service.UserService;
@@ -57,9 +58,21 @@ public class AuthController {
   }
 
   @PostMapping("/register")
-  public ResponseEntity<UserResponse> register(@Valid @RequestBody RegisterRequest request) {
-    UserResponse response = userService.register(request);
-    return ResponseEntity.status(HttpStatus.CREATED).body(response);
+  public Map<String, String> register(@Valid @RequestBody RegisterRequest request) {
+    userService.register(request);
+    return Map.of("message", "確認メールの送信を受け付けました。メール内のリンクから本登録を完了してください。");
+  }
+
+  @PostMapping("/verify-email")
+  public Map<String, String> verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+    userService.verifyEmail(request.getToken());
+    return Map.of("message", "メールアドレスの確認が完了しました。");
+  }
+
+  @PostMapping("/resend-verification")
+  public Map<String, String> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
+    userService.resendVerification(request.getEmail());
+    return Map.of("message", "対象のアカウントが確認できた場合、認証メールを送信します。");
   }
 
   @PostMapping("/login")

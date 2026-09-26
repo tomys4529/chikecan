@@ -243,6 +243,138 @@ class TicketControllerTest {
         .andExpect(status().isForbidden());
   }
 
+  // ===== 登録時の文字数・空白バリデーション =====
+
+  @Test
+  void タイトルが50文字なら登録できる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String title = "あ".repeat(50);
+    String body = String.format("{\"title\":\"%s\",\"description\":\"内容\",\"priority\":\"LOW\"}", title);
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void タイトルが51文字だと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String title = "あ".repeat(51);
+    String body = String.format("{\"title\":\"%s\",\"description\":\"内容\",\"priority\":\"LOW\"}", title);
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("タイトルは50文字以内で入力してください"));
+  }
+
+  @Test
+  void 内容が500文字なら登録できる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String description = "あ".repeat(500);
+    String body = String.format("{\"title\":\"タイトル\",\"description\":\"%s\",\"priority\":\"LOW\"}", description);
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void 内容が501文字だと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String description = "あ".repeat(501);
+    String body = String.format("{\"title\":\"タイトル\",\"description\":\"%s\",\"priority\":\"LOW\"}", description);
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("内容は500文字以内で入力してください"));
+  }
+
+  @Test
+  void タイトルが空文字だと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String body = "{\"title\":\"\",\"description\":\"内容\",\"priority\":\"LOW\"}";
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("タイトルは必須です"));
+  }
+
+  @Test
+  void タイトルが空白のみだと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String body = "{\"title\":\"   \",\"description\":\"内容\",\"priority\":\"LOW\"}";
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("タイトルは必須です"));
+  }
+
+  @Test
+  void 内容が空文字だと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String body = "{\"title\":\"タイトル\",\"description\":\"\",\"priority\":\"LOW\"}";
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("内容は必須です"));
+  }
+
+  @Test
+  void 内容が空白のみだと400になる() throws Exception {
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String body = "{\"title\":\"タイトル\",\"description\":\"   \",\"priority\":\"LOW\"}";
+
+    mockMvc.perform(post("/api/tickets")
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("内容は必須です"));
+  }
+
   // ===== 一覧・詳細 =====
 
   @Test
@@ -785,6 +917,110 @@ class TicketControllerTest {
             .content("{\"title\":\"\",\"description\":\"\"}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value(400));
+  }
+
+  // ===== 編集時の文字数・空白バリデーション =====
+
+  @Test
+  void チケット編集でタイトルが50文字なら更新できる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String title = "あ".repeat(50);
+    String body = String.format("{\"title\":\"%s\",\"description\":\"内容\",\"priority\":\"LOW\"}", title);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void チケット編集でタイトルが51文字だと400になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String title = "あ".repeat(51);
+    String body = String.format("{\"title\":\"%s\",\"description\":\"内容\",\"priority\":\"LOW\"}", title);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("タイトルは50文字以内で入力してください"));
+  }
+
+  @Test
+  void チケット編集で内容が500文字なら更新できる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String description = "あ".repeat(500);
+    String body = String.format("{\"title\":\"タイトル\",\"description\":\"%s\",\"priority\":\"LOW\"}", description);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void チケット編集で内容が501文字だと400になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+    String description = "あ".repeat(501);
+    String body = String.format("{\"title\":\"タイトル\",\"description\":\"%s\",\"priority\":\"LOW\"}", description);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("内容は500文字以内で入力してください"));
+  }
+
+  @Test
+  void チケット編集でタイトルが空白のみだと400になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"   \",\"description\":\"内容\",\"priority\":\"LOW\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("タイトルは必須です"));
+  }
+
+  @Test
+  void チケット編集で内容が空白のみだと400になる() throws Exception {
+    Ticket ticket = createTicket(userId, null, TicketStatus.OPEN);
+    MockHttpSession session = loginAs(USER_EMAIL);
+    CsrfCredentials csrf = obtainCsrfToken(session);
+
+    mockMvc.perform(patch("/api/tickets/" + ticket.getId())
+            .session(session)
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"タイトル\",\"description\":\"   \",\"priority\":\"LOW\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("内容は必須です"));
   }
 
   @Test

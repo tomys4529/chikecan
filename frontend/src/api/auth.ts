@@ -3,8 +3,11 @@ import type {
   CsrfTokenResponse,
   LoginRequest,
   LogoutResponse,
+  MessageResponse,
   RegisterRequest,
+  ResendVerificationRequest,
   UserResponse,
+  VerifyEmailRequest,
 } from '../types/auth';
 
 /**
@@ -21,8 +24,22 @@ export async function ensureCsrfToken(): Promise<void> {
   }
 }
 
-export function register(request: RegisterRequest): Promise<UserResponse> {
-  return apiFetch<UserResponse>('/api/auth/register', {
+export function register(request: RegisterRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function verifyEmail(request: VerifyEmailRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function resendVerification(request: ResendVerificationRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/auth/resend-verification', {
     method: 'POST',
     body: JSON.stringify(request),
   });

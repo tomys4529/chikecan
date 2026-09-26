@@ -47,6 +47,12 @@ public class GlobalExceptionHandler {
     return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), request);
   }
 
+  @ExceptionHandler(InvalidVerificationTokenException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidVerificationToken(InvalidVerificationTokenException ex,
+      HttpServletRequest request) {
+    return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+  }
+
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ErrorResponse> handleNotFound(NoResourceFoundException ex, HttpServletRequest request) {
     return build(HttpStatus.NOT_FOUND, "指定されたリソースが見つかりません", request);

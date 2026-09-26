@@ -8,6 +8,11 @@ import type { TicketPriority } from '../types/ticket';
 import { LoadingIndicator } from '../components/LoadingIndicator';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { NotFoundPage } from './NotFoundPage';
+import {
+  TICKET_DESCRIPTION_MAX_LENGTH,
+  TICKET_TITLE_MAX_LENGTH,
+  validateTicketFields,
+} from '../utils/ticketValidation';
 
 function parseTicketId(idParam: string | undefined): number | null {
   if (idParam === undefined) return null;
@@ -96,8 +101,9 @@ export function TicketEditPage() {
 
     setErrorMessage(null);
 
-    if (!title.trim() || !description.trim()) {
-      setErrorMessage('タイトルと内容を入力してください');
+    const validationMessage = validateTicketFields(title, description);
+    if (validationMessage) {
+      setErrorMessage(validationMessage);
       return;
     }
 
@@ -130,7 +136,11 @@ export function TicketEditPage() {
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={submitting}
+              maxLength={TICKET_TITLE_MAX_LENGTH}
             />
+            <span className="form-field__counter">
+              {title.length} / {TICKET_TITLE_MAX_LENGTH}
+            </span>
           </div>
           <div className="form-field">
             <label htmlFor="ticket-description">内容</label>
@@ -140,7 +150,11 @@ export function TicketEditPage() {
               onChange={(event) => setDescription(event.target.value)}
               disabled={submitting}
               rows={6}
+              maxLength={TICKET_DESCRIPTION_MAX_LENGTH}
             />
+            <span className="form-field__counter">
+              {description.length} / {TICKET_DESCRIPTION_MAX_LENGTH}
+            </span>
           </div>
           <div className="form-field">
             <label htmlFor="ticket-priority">優先度</label>

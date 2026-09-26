@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import type { ReactNode } from 'react';
 import { ApiError } from '../api/client';
 import { ensureCsrfToken, fetchCurrentUser, login as loginRequest, logout as logoutRequest, register as registerRequest } from '../api/auth';
-import type { LoginRequest, RegisterRequest, UserResponse } from '../types/auth';
+import type { LoginRequest, MessageResponse, RegisterRequest, UserResponse } from '../types/auth';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -21,7 +21,7 @@ interface AuthContextValue {
   initError: string | null;
   login: (input: LoginRequest) => Promise<void>;
   logout: () => Promise<void>;
-  register: (input: RegisterRequest) => Promise<UserResponse>;
+  register: (input: RegisterRequest) => Promise<MessageResponse>;
   invalidateSession: () => void;
   applyExperienceUpdate: (update: ExperienceUpdate) => void;
 }

@@ -4,6 +4,7 @@ import { PublicOnlyRoute } from './PublicOnlyRoute';
 import { UserOnlyRoute } from './UserOnlyRoute';
 import { LoginPage } from '../pages/LoginPage';
 import { RegisterPage } from '../pages/RegisterPage';
+import { VerifyEmailPage } from '../pages/VerifyEmailPage';
 import { TicketListPage } from '../pages/TicketListPage';
 import { TicketCreatePage } from '../pages/TicketCreatePage';
 import { TicketDetailPage } from '../pages/TicketDetailPage';
@@ -26,6 +27,10 @@ export function AppRoutes() {
           <Route path="/tickets/:id/edit" element={<TicketEditPage />} />
         </Route>
       </Route>
+
+      {/* メール認証リンクの遷移先。ログイン有無に関わらずアクセスできる必要があるため、
+          PublicOnlyRoute/ProtectedRouteのどちらにも属さない独立したルートにする。 */}
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
 
       <Route path="/" element={<Navigate to="/tickets" replace />} />
       <Route path="*" element={<NotFoundPage />} />
