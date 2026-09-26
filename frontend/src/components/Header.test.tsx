@@ -101,6 +101,32 @@ describe('Header', () => {
     expect(screen.getByText(/山田太郎様/)).toBeInTheDocument();
   });
 
+  it('認証済みの場合はアカウント設定へのリンクを表示する', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ id: 1, name: '山田太郎', email: 'user@example.com', role: 'USER', enabled: true, createdAt: '2026-01-01T00:00:00Z' }),
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <Header />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('link', { name: 'アカウント設定' })).toHaveAttribute('href', '/account');
+  });
+
   it('ログアウトボタンをクリックするとPOST /api/auth/logoutが実行され未認証表示へ切り替わる', async () => {
     let csrfCallCount = 0;
     let logoutCalled = false;

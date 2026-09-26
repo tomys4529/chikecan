@@ -19,4 +19,11 @@ public interface PasswordResetTokenRepository extends JpaRepository<PasswordRese
    * 戻り値は削除件数(呼び出し元でのログ・テスト用)。
    */
   long deleteByExpiresAtBefore(Instant expiresAt);
+
+  /**
+   * 指定ユーザーの有効なパスワードリセットtokenを削除する。メールアドレス変更が
+   * 成功した際、旧メールアドレス宛に発行済みのリセットリンクを無効化するために使う。
+   * 戻り値は削除件数(呼び出し元でのログ・テスト用)。
+   */
+  long deleteByUserId(Long userId);
 }

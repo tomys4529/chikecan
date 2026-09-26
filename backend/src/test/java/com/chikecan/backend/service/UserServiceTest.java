@@ -22,13 +22,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
+import com.chikecan.backend.entity.EmailChangeRequest;
 import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.DuplicateEmailException;
+import com.chikecan.backend.exception.InvalidCredentialsException;
+import com.chikecan.backend.exception.InvalidEmailChangeTokenException;
 import com.chikecan.backend.exception.InvalidPasswordResetTokenException;
 import com.chikecan.backend.exception.InvalidVerificationTokenException;
+import com.chikecan.backend.exception.SamePasswordException;
+import com.chikecan.backend.repository.EmailChangeRequestRepository;
 import com.chikecan.backend.repository.PasswordResetTokenRepository;
 import com.chikecan.backend.repository.PendingRegistrationRepository;
 import com.chikecan.backend.repository.UserRepository;
@@ -47,6 +52,9 @@ class UserServiceTest {
   private PasswordResetTokenRepository passwordResetTokenRepository;
 
   @Mock
+  private EmailChangeRequestRepository emailChangeRequestRepository;
+
+  @Mock
   private PasswordEncoder passwordEncoder;
 
   @Mock
@@ -55,11 +63,15 @@ class UserServiceTest {
   @Mock
   private PasswordResetMailService passwordResetMailService;
 
+  @Mock
+  private EmailChangeMailService emailChangeMailService;
+
   private UserService userService;
 
   private UserService newService() {
     return new UserService(userRepository, pendingRegistrationRepository, passwordResetTokenRepository,
-        passwordEncoder, verificationMailService, passwordResetMailService);
+        emailChangeRequestRepository, passwordEncoder, verificationMailService, passwordResetMailService,
+        emailChangeMailService);
   }
 
   private RegisterRequest requestOf(String name, String email, String password) {
@@ -86,6 +98,13 @@ class UserServiceTest {
     PasswordResetToken token = new PasswordResetToken(userId, tokenHash, expiresAt);
     ReflectionTestUtils.setField(token, "id", id);
     return token;
+  }
+
+  private EmailChangeRequest emailChangeRequestOf(Long id, Long userId, String newEmail, String tokenHash,
+      Instant expiresAt) {
+    EmailChangeRequest request = new EmailChangeRequest(userId, newEmail, tokenHash, expiresAt);
+    ReflectionTestUtils.setField(request, "id", id);
+    return request;
   }
 
   // ===== 登録(pending_registrationsへの一時保存) =====
@@ -522,6 +541,310 @@ class UserServiceTest {
     // 1回目の更新でtokenは削除済みのため、2回目は見つからず失敗する。
     assertThatThrownBy(() -> userService.confirmPasswordReset(rawToken, "AnotherPassw0rd1!"))
         .isInstanceOf(InvalidPasswordResetTokenException.class);
+  }
+
+  // ===== ログイン後パスワード変更 =====
+
+  @Test
+  void 現在のパスワードが正しい場合はパスワードが更新される() {
+    userService = newService();
+    User user = userOf(50L, "変更太郎", "change-password@example.com", "old-hash");
+
+    when(userRepository.findById(50L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("OldPassw0rd1!", "old-hash")).thenReturn(true);
+    when(passwordEncoder.encode("NewPassw0rd1!")).thenReturn("new-hashed-value");
+
+    userService.changePassword(50L, "OldPassw0rd1!", "NewPassw0rd1!");
+
+    assertThat(user.getPasswordHash()).isEqualTo("new-hashed-value");
+    verify(userRepository).save(user);
+  }
+
+  @Test
+  void 現在のパスワードが誤っている場合は失敗しパスワードが更新されない() {
+    userService = newService();
+    User user = userOf(51L, "誤り太郎", "wrong-current@example.com", "old-hash");
+
+    when(userRepository.findById(51L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("WrongPassw0rd1!", "old-hash")).thenReturn(false);
+
+    assertThatThrownBy(() -> userService.changePassword(51L, "WrongPassw0rd1!", "NewPassw0rd1!"))
+        .isInstanceOf(InvalidCredentialsException.class);
+
+    assertThat(user.getPasswordHash()).isEqualTo("old-hash");
+    verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void 新しいパスワードが現在のパスワードと同じ場合は失敗する() {
+    userService = newService();
+    User user = userOf(52L, "同一太郎", "same-password@example.com", "old-hash");
+
+    when(userRepository.findById(52L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("SamePassw0rd1!", "old-hash")).thenReturn(true);
+
+    assertThatThrownBy(() -> userService.changePassword(52L, "SamePassw0rd1!", "SamePassw0rd1!"))
+        .isInstanceOf(SamePasswordException.class);
+
+    verify(userRepository, never()).save(any());
+  }
+
+  // ===== メールアドレス変更申請 =====
+
+  @Test
+  void 正常な申請でtokenが作成されメールが送信される() {
+    userService = newService();
+    User user = userOf(60L, "申請太郎", "current@example.com", "hash");
+
+    when(userRepository.findById(60L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("new-address@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("new-address@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByNewEmail("new-address@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByUserId(60L)).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.save(any(EmailChangeRequest.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.requestEmailChange(60L, "New-Address@EXAMPLE.com", "Passw0rd123!");
+
+    ArgumentCaptor<EmailChangeRequest> captor = ArgumentCaptor.forClass(EmailChangeRequest.class);
+    verify(emailChangeRequestRepository).save(captor.capture());
+    EmailChangeRequest saved = captor.getValue();
+
+    assertThat(saved.getUserId()).isEqualTo(60L);
+    assertThat(saved.getNewEmail()).isEqualTo("new-address@example.com");
+    assertThat(saved.getTokenHash()).hasSize(64).matches("^[0-9a-f]{64}$");
+    verify(emailChangeMailService).sendEmailChangeEmail(
+        org.mockito.ArgumentMatchers.eq("new-address@example.com"), anyString());
+  }
+
+  @Test
+  void 現在のパスワードが誤っている場合はメール変更申請が失敗する() {
+    userService = newService();
+    User user = userOf(61L, "失敗太郎", "current2@example.com", "hash");
+
+    when(userRepository.findById(61L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("WrongPassw0rd1!", "hash")).thenReturn(false);
+
+    assertThatThrownBy(() -> userService.requestEmailChange(61L, "new@example.com", "WrongPassw0rd1!"))
+        .isInstanceOf(InvalidCredentialsException.class);
+
+    verify(emailChangeRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void 現在のメールアドレスと同じ場合はメール変更申請が失敗する() {
+    userService = newService();
+    User user = userOf(62L, "同一太郎", "same-as-current@example.com", "hash");
+
+    when(userRepository.findById(62L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+
+    assertThatThrownBy(() -> userService.requestEmailChange(62L, "Same-As-Current@EXAMPLE.com", "Passw0rd123!"))
+        .isInstanceOf(DuplicateEmailException.class);
+
+    verify(emailChangeRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void usersで既に使われているメールアドレスへの変更申請は失敗する() {
+    userService = newService();
+    User user = userOf(63L, "重複太郎", "requester@example.com", "hash");
+
+    when(userRepository.findById(63L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("already-registered@example.com"))
+        .thenReturn(Optional.of(new User("既存", "already-registered@example.com", "hash2", Role.USER, true)));
+
+    assertThatThrownBy(() -> userService.requestEmailChange(63L, "already-registered@example.com", "Passw0rd123!"))
+        .isInstanceOf(DuplicateEmailException.class);
+
+    verify(emailChangeRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void pendingで既に使われているメールアドレスへの変更申請は失敗する() {
+    userService = newService();
+    User user = userOf(64L, "保留太郎", "requester2@example.com", "hash");
+
+    when(userRepository.findById(64L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("pending-target@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("pending-target@example.com"))
+        .thenReturn(Optional.of(pendingOf(1L, "pending-target@example.com", "some-token-hash",
+            Instant.now().plusSeconds(3600))));
+
+    assertThatThrownBy(() -> userService.requestEmailChange(64L, "pending-target@example.com", "Passw0rd123!"))
+        .isInstanceOf(DuplicateEmailException.class);
+
+    verify(emailChangeRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void 他ユーザーの変更申請で使われているメールアドレスへの変更申請は失敗する() {
+    userService = newService();
+    User user = userOf(65L, "競合太郎", "requester3@example.com", "hash");
+    EmailChangeRequest otherUsersRequest =
+        emailChangeRequestOf(90L, 999L, "contested@example.com", "other-token-hash", Instant.now().plusSeconds(3600));
+
+    when(userRepository.findById(65L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("contested@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("contested@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByNewEmail("contested@example.com"))
+        .thenReturn(Optional.of(otherUsersRequest));
+
+    assertThatThrownBy(() -> userService.requestEmailChange(65L, "contested@example.com", "Passw0rd123!"))
+        .isInstanceOf(DuplicateEmailException.class);
+
+    verify(emailChangeRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void 同一ユーザーが再申請すると既存申請が新しい内容とtokenへ更新される() {
+    userService = newService();
+    User user = userOf(66L, "再申請太郎", "reissue-requester@example.com", "hash");
+    EmailChangeRequest existing = emailChangeRequestOf(91L, 66L, "old-target@example.com", "old-token-hash",
+        Instant.now().plusSeconds(1800));
+
+    when(userRepository.findById(66L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("new-target@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("new-target@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByNewEmail("new-target@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByUserId(66L)).thenReturn(Optional.of(existing));
+    when(emailChangeRequestRepository.save(any(EmailChangeRequest.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.requestEmailChange(66L, "new-target@example.com", "Passw0rd123!");
+
+    ArgumentCaptor<EmailChangeRequest> captor = ArgumentCaptor.forClass(EmailChangeRequest.class);
+    verify(emailChangeRequestRepository).save(captor.capture());
+    EmailChangeRequest saved = captor.getValue();
+
+    // 同一レコード(id=91)が更新されており、新しいレコードとして追加されていない。
+    assertThat(saved.getId()).isEqualTo(91L);
+    assertThat(saved.getNewEmail()).isEqualTo("new-target@example.com");
+    assertThat(saved.getTokenHash()).isNotEqualTo("old-token-hash");
+  }
+
+  @Test
+  void メール変更申請のたびに期限切れ申請のクリーンアップが呼ばれる() {
+    userService = newService();
+    User user = userOf(67L, "掃除太郎", "cleanup-requester@example.com", "hash");
+
+    when(userRepository.findById(67L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.matches("Passw0rd123!", "hash")).thenReturn(true);
+    when(userRepository.findByEmail("cleanup-target@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("cleanup-target@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByNewEmail("cleanup-target@example.com")).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.findByUserId(67L)).thenReturn(Optional.empty());
+    when(emailChangeRequestRepository.save(any(EmailChangeRequest.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.requestEmailChange(67L, "cleanup-target@example.com", "Passw0rd123!");
+
+    verify(emailChangeRequestRepository).deleteByExpiresAtBefore(any(Instant.class));
+  }
+
+  // ===== メールアドレス変更確認(email更新) =====
+
+  @Test
+  void 正常なtokenでusersのemailが更新され申請が削除される() {
+    userService = newService();
+    String rawToken = "email-change-raw-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    User user = userOf(70L, "確認太郎", "old-email@example.com", "hash");
+    EmailChangeRequest request =
+        emailChangeRequestOf(95L, 70L, "confirmed-new@example.com", tokenHash, Instant.now().plusSeconds(1800));
+
+    when(emailChangeRequestRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(request));
+    when(userRepository.findById(70L)).thenReturn(Optional.of(user));
+    when(userRepository.findByEmail("confirmed-new@example.com")).thenReturn(Optional.empty());
+
+    userService.confirmEmailChange(rawToken);
+
+    assertThat(user.getEmail()).isEqualTo("confirmed-new@example.com");
+    verify(userRepository).save(user);
+    verify(emailChangeRequestRepository).delete(request);
+    // 旧メール宛に発行済みのパスワードリセットtokenを無効化する。
+    verify(passwordResetTokenRepository).deleteByUserId(70L);
+  }
+
+  @Test
+  void 存在しないtokenでの確認は失敗する() {
+    userService = newService();
+    String tokenHash = VerificationTokenGenerator.hash("unknown-email-change-token");
+    when(emailChangeRequestRepository.findByTokenHash(tokenHash)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> userService.confirmEmailChange("unknown-email-change-token"))
+        .isInstanceOf(InvalidEmailChangeTokenException.class);
+
+    verify(userRepository, never()).save(any());
+    verify(passwordResetTokenRepository, never()).deleteByUserId(any());
+  }
+
+  @Test
+  void 期限切れtokenでの確認は失敗しemailが変更されない() {
+    userService = newService();
+    String rawToken = "expired-email-change-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    EmailChangeRequest request =
+        emailChangeRequestOf(96L, 71L, "expired-target@example.com", tokenHash, Instant.now().minusSeconds(1));
+
+    when(emailChangeRequestRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(request));
+
+    assertThatThrownBy(() -> userService.confirmEmailChange(rawToken))
+        .isInstanceOf(InvalidEmailChangeTokenException.class);
+
+    verify(userRepository, never()).save(any());
+    verify(emailChangeRequestRepository, never()).delete(any());
+    verify(passwordResetTokenRepository, never()).deleteByUserId(any());
+  }
+
+  @Test
+  void 確認成功後に同じtokenを再使用すると失敗する() {
+    userService = newService();
+    String rawToken = "one-time-email-change-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    User user = userOf(72L, "再利用太郎", "reuse-old@example.com", "hash");
+    EmailChangeRequest request =
+        emailChangeRequestOf(97L, 72L, "reuse-new@example.com", tokenHash, Instant.now().plusSeconds(1800));
+
+    when(emailChangeRequestRepository.findByTokenHash(tokenHash))
+        .thenReturn(Optional.of(request))
+        .thenReturn(Optional.empty());
+    when(userRepository.findById(72L)).thenReturn(Optional.of(user));
+    when(userRepository.findByEmail("reuse-new@example.com")).thenReturn(Optional.empty());
+
+    userService.confirmEmailChange(rawToken);
+    verify(emailChangeRequestRepository).delete(request);
+
+    // 1回目の確認で申請は削除済みのため、2回目は見つからず失敗する。
+    assertThatThrownBy(() -> userService.confirmEmailChange(rawToken))
+        .isInstanceOf(InvalidEmailChangeTokenException.class);
+  }
+
+  @Test
+  void 確認直前に別ユーザーが同じメールアドレスを取得していた場合は失敗し申請を削除する() {
+    userService = newService();
+    String rawToken = "race-email-change-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    User user = userOf(73L, "競合太郎", "race-old@example.com", "hash");
+    EmailChangeRequest request =
+        emailChangeRequestOf(98L, 73L, "race-target@example.com", tokenHash, Instant.now().plusSeconds(1800));
+
+    when(emailChangeRequestRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(request));
+    when(userRepository.findById(73L)).thenReturn(Optional.of(user));
+    when(userRepository.findByEmail("race-target@example.com"))
+        .thenReturn(Optional.of(new User("先に取得済み", "race-target@example.com", "hash2", Role.USER, true)));
+
+    assertThatThrownBy(() -> userService.confirmEmailChange(rawToken))
+        .isInstanceOf(InvalidEmailChangeTokenException.class);
+
+    verify(userRepository, never()).save(any());
+    verify(emailChangeRequestRepository).delete(request);
+    verify(passwordResetTokenRepository, never()).deleteByUserId(any());
   }
 
   // ===== 既存機能(担当AGENT一覧) =====

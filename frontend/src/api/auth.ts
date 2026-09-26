@@ -1,5 +1,8 @@
 import { apiFetch } from './client';
 import type {
+  ChangeEmailRequest,
+  ChangePasswordRequest,
+  ConfirmEmailChangeRequest,
   CsrfTokenResponse,
   LoginRequest,
   LogoutResponse,
@@ -56,6 +59,27 @@ export function requestPasswordReset(request: PasswordResetRequest): Promise<Mes
 
 export function confirmPasswordReset(request: PasswordResetConfirmRequest): Promise<MessageResponse> {
   return apiFetch<MessageResponse>('/api/auth/password-reset/confirm', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function changePassword(request: ChangePasswordRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/account/password', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function requestEmailChange(request: ChangeEmailRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/account/email-change/request', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function confirmEmailChange(request: ConfirmEmailChangeRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/account/email-change/confirm', {
     method: 'POST',
     body: JSON.stringify(request),
   });

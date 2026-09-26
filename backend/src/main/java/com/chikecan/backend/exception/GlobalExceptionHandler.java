@@ -59,6 +59,17 @@ public class GlobalExceptionHandler {
     return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
   }
 
+  @ExceptionHandler(SamePasswordException.class)
+  public ResponseEntity<ErrorResponse> handleSamePassword(SamePasswordException ex, HttpServletRequest request) {
+    return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+  }
+
+  @ExceptionHandler(InvalidEmailChangeTokenException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidEmailChangeToken(InvalidEmailChangeTokenException ex,
+      HttpServletRequest request) {
+    return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+  }
+
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ErrorResponse> handleNotFound(NoResourceFoundException ex, HttpServletRequest request) {
     return build(HttpStatus.NOT_FOUND, "指定されたリソースが見つかりません", request);
@@ -100,8 +111,13 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex,
       HttpServletRequest request) {
-    if (isEmailUniqueConstraintViolation(ex)) {
+    if (matchesConstraint(ex, USERS_EMAIL_UNIQUE_CONSTRAINT_NAME)) {
       return build(HttpStatus.CONFLICT, "このメールアドレスは既に登録されています", request);
+    }
+    // Service層の事前確認(users/pending_registrations/他ユーザーのemail_change_requests)を
+    // すり抜けた同時リクエストの競合をDBのUNIQUE制約が検知した場合。
+    if (matchesConstraint(ex, EMAIL_CHANGE_REQUESTS_NEW_EMAIL_UNIQUE_CONSTRAINT_NAME)) {
+      return build(HttpStatus.CONFLICT, "このメールアドレスは既に使用されています", request);
     }
     log.error("予期しないデータ整合性エラーが発生しました", ex);
     return build(HttpStatus.INTERNAL_SERVER_ERROR, "サーバー内部でエラーが発生しました", request);
@@ -113,19 +129,21 @@ public class GlobalExceptionHandler {
     return build(HttpStatus.INTERNAL_SERVER_ERROR, "サーバー内部でエラーが発生しました", request);
   }
 
-  private static final String EMAIL_UNIQUE_CONSTRAINT_NAME = "uk_users_email";
+  private static final String USERS_EMAIL_UNIQUE_CONSTRAINT_NAME = "uk_users_email";
+  private static final String EMAIL_CHANGE_REQUESTS_NEW_EMAIL_UNIQUE_CONSTRAINT_NAME =
+      "uk_email_change_requests_new_email";
 
-  private boolean isEmailUniqueConstraintViolation(DataIntegrityViolationException ex) {
+  private boolean matchesConstraint(DataIntegrityViolationException ex, String constraintName) {
     ConstraintViolationException constraintViolation = findConstraintViolationException(ex);
     if (constraintViolation != null && constraintViolation.getConstraintName() != null) {
-      return EMAIL_UNIQUE_CONSTRAINT_NAME.equalsIgnoreCase(constraintViolation.getConstraintName());
+      return constraintName.equalsIgnoreCase(constraintViolation.getConstraintName());
     }
 
     // ConstraintViolationExceptionが見つからない、または制約名を取得できない場合のみ
     // 例外メッセージ文字列によるフォールバック判定を行う。
     Throwable rootCause = ex.getMostSpecificCause();
     String message = rootCause.getMessage();
-    return message != null && message.toUpperCase(Locale.ROOT).contains(EMAIL_UNIQUE_CONSTRAINT_NAME.toUpperCase(Locale.ROOT));
+    return message != null && message.toUpperCase(Locale.ROOT).contains(constraintName.toUpperCase(Locale.ROOT));
   }
 
   private ConstraintViolationException findConstraintViolationException(Throwable ex) {
