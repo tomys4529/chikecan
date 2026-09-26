@@ -6,11 +6,18 @@ import { resendVerification } from '../api/auth';
 import { ApiError } from '../api/client';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { isPasswordValid, PASSWORD_MAX_LENGTH, PASSWORD_REQUIREMENTS_MESSAGE } from '../utils/passwordValidation';
+import type { NameFormat } from '../types/auth';
+
+const NAME_MAX_LENGTH = 30;
 
 export function RegisterPage() {
   const { register } = useAuth();
 
-  const [name, setName] = useState('');
+  // 初期値は日本向け。
+  const [nameFormat, setNameFormat] = useState<NameFormat>('JAPANESE');
+  const [familyName, setFamilyName] = useState('');
+  const [givenName, setGivenName] = useState('');
+  const [middleName, setMiddleName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -26,7 +33,20 @@ export function RegisterPage() {
     event.preventDefault();
     setErrorMessage(null);
 
-    if (!name.trim() || !email.trim() || !password || !passwordConfirm) {
+    const trimmedFamilyName = familyName.trim();
+    const trimmedGivenName = givenName.trim();
+    const trimmedMiddleName = middleName.trim();
+
+    // 姓・名はJAPANESE/INTERNATIONALいずれも必須(ミドルネームのみ常に任意)。
+    // どちらの項目が不足しているか分かるよう、入力形式に応じたメッセージにする。
+    if (!trimmedFamilyName || !trimmedGivenName) {
+      setErrorMessage(
+        nameFormat === 'JAPANESE' ? '姓と名を入力してください' : 'First nameとLast nameを入力してください',
+      );
+      return;
+    }
+
+    if (!email.trim() || !password || !passwordConfirm) {
       setErrorMessage('全ての項目を入力してください');
       return;
     }
@@ -47,7 +67,16 @@ export function RegisterPage() {
 
     setSubmitting(true);
     try {
-      await register({ name, email, password });
+      await register({
+        nameFormat,
+        familyName: trimmedFamilyName,
+        givenName: trimmedGivenName,
+        // JAPANESEではmiddleNameを使わないため、意図せず前の入力形式の値が
+        // 送信されないよう常に空文字にする。
+        middleName: nameFormat === 'INTERNATIONAL' ? trimmedMiddleName : '',
+        email,
+        password,
+      });
       setRegisteredEmail(email.trim());
     } catch (error) {
       setErrorMessage(error instanceof ApiError ? error.message : '登録に失敗しました。時間をおいて再度お試しください。');
@@ -64,19 +93,93 @@ export function RegisterPage() {
     <section className="auth-page">
       <div className="card auth-card">
         <h1>ユーザー登録</h1>
+        <p className="form-hint">
+          <span className="required-mark">*</span> は必須項目です
+        </p>
         <form onSubmit={handleSubmit} noValidate className="form">
-          <div className="form-field">
-            <label htmlFor="register-name">氏名</label>
-            <input
-              id="register-name"
-              value={name}
-              autoComplete="name"
-              onChange={(event) => setName(event.target.value)}
-              maxLength={30}
-            />
+          <div className="form-field" role="radiogroup" aria-label="氏名の入力形式">
+            <label>
+              <input
+                type="radio"
+                name="name-format"
+                value="JAPANESE"
+                checked={nameFormat === 'JAPANESE'}
+                onChange={() => setNameFormat('JAPANESE')}
+              />
+              日本向け
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="name-format"
+                value="INTERNATIONAL"
+                checked={nameFormat === 'INTERNATIONAL'}
+                onChange={() => setNameFormat('INTERNATIONAL')}
+              />
+              海外向け
+            </label>
           </div>
+
+          {nameFormat === 'JAPANESE' ? (
+            <>
+              <div className="form-field">
+                <label htmlFor="register-family-name" className="required">姓</label>
+                <input
+                  id="register-family-name"
+                  value={familyName}
+                  autoComplete="family-name"
+                  onChange={(event) => setFamilyName(event.target.value)}
+                  maxLength={NAME_MAX_LENGTH}
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="register-given-name" className="required">名</label>
+                <input
+                  id="register-given-name"
+                  value={givenName}
+                  autoComplete="given-name"
+                  onChange={(event) => setGivenName(event.target.value)}
+                  maxLength={NAME_MAX_LENGTH}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="form-field">
+                <label htmlFor="register-given-name-intl" className="required">First name</label>
+                <input
+                  id="register-given-name-intl"
+                  value={givenName}
+                  autoComplete="given-name"
+                  onChange={(event) => setGivenName(event.target.value)}
+                  maxLength={NAME_MAX_LENGTH}
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="register-middle-name">Middle name（任意）</label>
+                <input
+                  id="register-middle-name"
+                  value={middleName}
+                  autoComplete="additional-name"
+                  onChange={(event) => setMiddleName(event.target.value)}
+                  maxLength={NAME_MAX_LENGTH}
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="register-family-name-intl" className="required">Last name</label>
+                <input
+                  id="register-family-name-intl"
+                  value={familyName}
+                  autoComplete="family-name"
+                  onChange={(event) => setFamilyName(event.target.value)}
+                  maxLength={NAME_MAX_LENGTH}
+                />
+              </div>
+            </>
+          )}
+
           <div className="form-field">
-            <label htmlFor="register-email">メールアドレス</label>
+            <label htmlFor="register-email" className="required">メールアドレス</label>
             <input
               id="register-email"
               type="email"
@@ -87,7 +190,7 @@ export function RegisterPage() {
             />
           </div>
           <div className="form-field">
-            <label htmlFor="register-password">パスワード</label>
+            <label htmlFor="register-password" className="required">パスワード</label>
             <input
               id="register-password"
               type="password"
@@ -98,7 +201,7 @@ export function RegisterPage() {
             />
           </div>
           <div className="form-field">
-            <label htmlFor="register-password-confirm">パスワード（確認）</label>
+            <label htmlFor="register-password-confirm" className="required">パスワード（確認）</label>
             <input
               id="register-password-confirm"
               type="password"

@@ -23,6 +23,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.entity.EmailChangeRequest;
+import com.chikecan.backend.entity.NameFormat;
 import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
@@ -74,9 +75,11 @@ class UserServiceTest {
         emailChangeMailService);
   }
 
-  private RegisterRequest requestOf(String name, String email, String password) {
+  private RegisterRequest requestOf(String familyName, String givenName, String email, String password) {
     RegisterRequest request = new RegisterRequest();
-    request.setName(name);
+    request.setNameFormat(NameFormat.JAPANESE);
+    request.setFamilyName(familyName);
+    request.setGivenName(givenName);
     request.setEmail(email);
     request.setPassword(password);
     return request;
@@ -112,7 +115,7 @@ class UserServiceTest {
   @Test
   void 正常登録するとメールが正規化されusersへは保存されずpendingへ保存される() {
     userService = newService();
-    RegisterRequest request = requestOf("山田太郎", "  Yamada@EXAMPLE.com  ", "Passw0rd123!");
+    RegisterRequest request = requestOf("山田", "太郎", "  Yamada@EXAMPLE.com  ", "Passw0rd123!");
 
     when(userRepository.findByEmail("yamada@example.com")).thenReturn(Optional.empty());
     when(pendingRegistrationRepository.findByEmail("yamada@example.com")).thenReturn(Optional.empty());
@@ -128,16 +131,71 @@ class UserServiceTest {
     PendingRegistration saved = captor.getValue();
 
     assertThat(saved.getEmail()).isEqualTo("yamada@example.com");
-    assertThat(saved.getName()).isEqualTo("山田太郎");
+    // LEGACY互換のname列には、姓名を組み立てた表示名相当の値が入る。
+    assertThat(saved.getName()).isEqualTo("山田 太郎");
     assertThat(saved.getPasswordHash()).isEqualTo("hashed-value");
     // 生パスワードがそのままpasswordHashへ入っていないこと。
     assertThat(saved.getPasswordHash()).isNotEqualTo("Passw0rd123!");
   }
 
   @Test
+  void 日本向け氏名で登録するとnameFormatと姓名がpendingへ保存される() {
+    userService = newService();
+    RegisterRequest request = requestOf("佐藤", "太郎", "japanese-name@example.com", "Passw0rd123!");
+
+    when(userRepository.findByEmail("japanese-name@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("japanese-name@example.com")).thenReturn(Optional.empty());
+    when(passwordEncoder.encode(anyString())).thenReturn("hashed-value");
+    when(pendingRegistrationRepository.save(any(PendingRegistration.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.register(request);
+
+    ArgumentCaptor<PendingRegistration> captor = ArgumentCaptor.forClass(PendingRegistration.class);
+    verify(pendingRegistrationRepository).save(captor.capture());
+    PendingRegistration saved = captor.getValue();
+
+    assertThat(saved.getNameFormat()).isEqualTo(NameFormat.JAPANESE);
+    assertThat(saved.getFamilyName()).isEqualTo("佐藤");
+    assertThat(saved.getGivenName()).isEqualTo("太郎");
+    assertThat(saved.getMiddleName()).isNull();
+    assertThat(saved.getName()).isEqualTo("佐藤 太郎");
+  }
+
+  @Test
+  void 海外向け氏名で登録するとnameFormatと姓名ミドルネームがpendingへ保存される() {
+    userService = newService();
+    RegisterRequest request = new RegisterRequest();
+    request.setNameFormat(NameFormat.INTERNATIONAL);
+    request.setFamilyName("Smith");
+    request.setGivenName("John");
+    request.setMiddleName("Michael");
+    request.setEmail("international-name@example.com");
+    request.setPassword("Passw0rd123!");
+
+    when(userRepository.findByEmail("international-name@example.com")).thenReturn(Optional.empty());
+    when(pendingRegistrationRepository.findByEmail("international-name@example.com")).thenReturn(Optional.empty());
+    when(passwordEncoder.encode(anyString())).thenReturn("hashed-value");
+    when(pendingRegistrationRepository.save(any(PendingRegistration.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.register(request);
+
+    ArgumentCaptor<PendingRegistration> captor = ArgumentCaptor.forClass(PendingRegistration.class);
+    verify(pendingRegistrationRepository).save(captor.capture());
+    PendingRegistration saved = captor.getValue();
+
+    assertThat(saved.getNameFormat()).isEqualTo(NameFormat.INTERNATIONAL);
+    assertThat(saved.getFamilyName()).isEqualTo("Smith");
+    assertThat(saved.getGivenName()).isEqualTo("John");
+    assertThat(saved.getMiddleName()).isEqualTo("Michael");
+    assertThat(saved.getName()).isEqualTo("John Michael Smith");
+  }
+
+  @Test
   void 登録時にpendingへ保存されるtoken_hashは生tokenの平文ではない() {
     userService = newService();
-    RegisterRequest request = requestOf("山田太郎", "hash-check@example.com", "Passw0rd123!");
+    RegisterRequest request = requestOf("山田", "太郎", "hash-check@example.com", "Passw0rd123!");
 
     when(userRepository.findByEmail("hash-check@example.com")).thenReturn(Optional.empty());
     when(pendingRegistrationRepository.findByEmail("hash-check@example.com")).thenReturn(Optional.empty());
@@ -160,7 +218,7 @@ class UserServiceTest {
   @Test
   void 登録時にexpires_atが現在時刻から24時間後になる() {
     userService = newService();
-    RegisterRequest request = requestOf("山田太郎", "expiry@example.com", "Passw0rd123!");
+    RegisterRequest request = requestOf("山田", "太郎", "expiry@example.com", "Passw0rd123!");
 
     when(userRepository.findByEmail("expiry@example.com")).thenReturn(Optional.empty());
     when(pendingRegistrationRepository.findByEmail("expiry@example.com")).thenReturn(Optional.empty());
@@ -183,7 +241,7 @@ class UserServiceTest {
   @Test
   void 登録時に確認メールが送信される() {
     userService = newService();
-    RegisterRequest request = requestOf("山田太郎", "mail-check@example.com", "Passw0rd123!");
+    RegisterRequest request = requestOf("山田", "太郎", "mail-check@example.com", "Passw0rd123!");
 
     when(userRepository.findByEmail("mail-check@example.com")).thenReturn(Optional.empty());
     when(pendingRegistrationRepository.findByEmail("mail-check@example.com")).thenReturn(Optional.empty());
@@ -199,7 +257,7 @@ class UserServiceTest {
   @Test
   void 既にusersへ正式登録済みのメールアドレスは重複エラーになりpendingへ保存されない() {
     userService = newService();
-    RegisterRequest request = requestOf("鈴木一郎", "duplicate@example.com", "Passw0rd123!");
+    RegisterRequest request = requestOf("鈴木", "一郎", "duplicate@example.com", "Passw0rd123!");
 
     when(userRepository.findByEmail("duplicate@example.com"))
         .thenReturn(Optional.of(new User("既存ユーザー", "duplicate@example.com", "hash", Role.USER, true)));
@@ -214,7 +272,7 @@ class UserServiceTest {
   @Test
   void pending済みのメールアドレスで再登録すると既存pendingが新しい内容とtokenで更新される() {
     userService = newService();
-    RegisterRequest request = requestOf("修正後の名前", "retry@example.com", "NewPassw0rd1!");
+    RegisterRequest request = requestOf("更新後", "花子", "retry@example.com", "NewPassw0rd1!");
 
     Instant oldExpiresAt = Instant.now().minusSeconds(10);
     PendingRegistration existing = pendingOf(1L, "retry@example.com", "old-token-hash", oldExpiresAt);
@@ -233,7 +291,9 @@ class UserServiceTest {
 
     // 同一インスタンス(id=1)が更新されており、新しいレコードとして追加されていない。
     assertThat(saved.getId()).isEqualTo(1L);
-    assertThat(saved.getName()).isEqualTo("修正後の名前");
+    assertThat(saved.getFamilyName()).isEqualTo("更新後");
+    assertThat(saved.getGivenName()).isEqualTo("花子");
+    assertThat(saved.getName()).isEqualTo("更新後 花子");
     assertThat(saved.getPasswordHash()).isEqualTo("new-hashed-value");
     // 古いtoken_hashは新しい値へ置き換わり、もう存在しない。
     assertThat(saved.getTokenHash()).isNotEqualTo("old-token-hash");
@@ -267,6 +327,30 @@ class UserServiceTest {
     assertThat(savedUser.isEnabled()).isTrue();
 
     verify(pendingRegistrationRepository).delete(pending);
+  }
+
+  @Test
+  void 認証成功時にpendingの構造化された氏名がusersへ引き継がれる() {
+    userService = newService();
+    String rawToken = "structured-name-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    PendingRegistration pending = new PendingRegistration("鈴木 花子", "structured-verify@example.com",
+        "hashed-password", tokenHash, Instant.now().plusSeconds(3600),
+        NameFormat.JAPANESE, "鈴木", "花子", null);
+
+    when(pendingRegistrationRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(pending));
+    when(userRepository.findByEmail("structured-verify@example.com")).thenReturn(Optional.empty());
+
+    userService.verifyEmail(rawToken);
+
+    ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+    verify(userRepository).save(userCaptor.capture());
+    User savedUser = userCaptor.getValue();
+    assertThat(savedUser.getNameFormat()).isEqualTo(NameFormat.JAPANESE);
+    assertThat(savedUser.getFamilyName()).isEqualTo("鈴木");
+    assertThat(savedUser.getGivenName()).isEqualTo("花子");
+    assertThat(savedUser.getMiddleName()).isNull();
+    assertThat(savedUser.getDisplayName()).isEqualTo("鈴木 花子");
   }
 
   @Test

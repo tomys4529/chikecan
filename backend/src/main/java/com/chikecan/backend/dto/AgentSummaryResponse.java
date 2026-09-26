@@ -9,7 +9,7 @@ public class AgentSummaryResponse {
 
   public AgentSummaryResponse(User user) {
     this.id = user.getId();
-    this.name = user.getName();
+    this.name = user.getDisplayName();
   }
 
   public Long getId() {
