@@ -44,13 +44,17 @@ chikecanは、社内問い合わせ対応のような「依頼 → 割り当て 
 
 ```mermaid
 flowchart TD
-    U1["USER<br>チケットを発行する"] --> A1["ADMIN<br>内容を確認し担当AGENTを設定する"]
-    A1 --> G1["AGENT<br>自分の担当チケットを確認する"]
-    G1 --> G2["AGENT<br>ステータスを更新する"]
-    G2 --> R1{"初めて解決済み<br>ステータスにしたか"}
-    R1 -- はい --> X1["優先度に応じたXPを獲得する"]
+    U1["USER<br/>チケット発行"]
+    A1["ADMIN<br/>担当AGENTを設定"]
+    G1["AGENT<br/>担当チケットを確認"]
+    G2["AGENT<br/>ステータス更新"]
+    R1{"初回の<br/>解決済みか"}
+    X1["XPを獲得"]
+    U2["USER<br/>結果を確認"]
+
+    U1 --> A1 --> G1 --> G2 --> R1
+    R1 -- はい --> X1 --> U2
     R1 -- いいえ --> G2
-    X1 --> U2["USER<br>進捗・担当者・対応結果を確認する"]
 ```
 
 ## ロール別の機能
@@ -172,9 +176,13 @@ experienceToNextLevel  = 100 - currentLevelExperience
 ## システム構成
 
 ```mermaid
-flowchart LR
-    B["ブラウザ"] -->|HTTPS| R["Renderのコンテナ<br>Spring Boot REST API +<br>Reactビルド済み静的ファイル"]
-    R -->|JDBC| N[("Neon<br>PostgreSQL")]
+flowchart TD
+    B["ブラウザ"]
+    R["Renderのコンテナ<br/>Spring Boot + React"]
+    N[("Neon<br/>PostgreSQL")]
+
+    B -->|HTTPS| R
+    R -->|JDBC| N
 ```
 
 本番環境ではDockerのマルチステージビルドで、React（`frontend`）をビルドしてSpring Boot（`backend`）の静的リソースへ組み込み、1つのjarとしてビルドしています。これによりブラウザからはフロントとAPIが同一オリジンとなり、本番ではCORS設定が実質的に不要になっています。
@@ -222,26 +230,28 @@ erDiagram
         varchar name
         varchar email UK
         varchar role
-        boolean enabled
-        int experience
     }
     TICKETS {
         bigint id PK
         varchar title
         varchar status
-        varchar priority
         bigint requester_id FK
         bigint assignee_id FK
-        boolean xp_awarded
     }
 ```
+
+図には関連と主要カラムのみを示しています。残りのカラム（`enabled`・`experience`・`priority`・`xp_awarded`など）は、直後の表と各テーブルの用途説明を参照してください。
 
 | テーブル | 用途 |
 | --- | --- |
 | `users` | アカウント情報（ロール、有効フラグ、累計XPを含む） |
 | `tickets` | チケット情報（ステータス、優先度、依頼者・担当者のID、XP判定済みフラグを含む） |
 
-マイグレーションは`V1__create_users_table.sql`（usersテーブル作成）、`V2__create_tickets_table.sql`（ticketsテーブル作成）、`V3__add_agent_experience_and_ticket_xp_tracking.sql`（累計XPとXP判定フラグの追加）の3ファイルで管理しています。
+マイグレーションは次の3ファイルで管理しています。
+
+- `V1__create_users_table.sql`: usersテーブルの作成
+- `V2__create_tickets_table.sql`: ticketsテーブルの作成
+- `V3__add_agent_experience_and_ticket_xp_tracking.sql`: 累計XPとXP判定フラグの追加
 
 ## API概要
 
@@ -251,15 +261,22 @@ erDiagram
 | GET | `/api/auth/csrf` | 不要 | CSRFトークン取得 |
 | POST | `/api/auth/register` | 不要 | ユーザー登録（USER固定） |
 | POST | `/api/auth/login` | 不要 | ログイン |
-| POST | `/api/auth/logout` | 不要（呼び出し時点で未ログインでも安全） | ログアウト |
+| POST | `/api/auth/logout` | 不要 | ログアウト |
 | GET | `/api/auth/me` | 認証済み | ログイン中ユーザー情報・XP/レベルの取得 |
 | POST | `/api/tickets` | USER | チケット作成 |
-| GET | `/api/tickets` | 認証済み（ロールにより取得範囲が変わる） | チケット一覧（`page`・`size`によるページネーション） |
-| GET | `/api/tickets/{id}` | 認証済み（所有者・担当者・ADMIN） | チケット詳細 |
-| PATCH | `/api/tickets/{id}` | USER（本人のOPENチケットのみ） | チケット編集 |
+| GET | `/api/tickets` | 認証済み※1 | チケット一覧（ページネーション） |
+| GET | `/api/tickets/{id}` | 認証済み※2 | チケット詳細 |
+| PATCH | `/api/tickets/{id}` | USER※3 | チケット編集 |
 | PATCH | `/api/tickets/{id}/status` | AGENT, ADMIN | ステータス更新（初回解決時にXP判定） |
 | PATCH | `/api/tickets/{id}/assignee` | ADMIN | 担当者の設定・解除 |
 | GET | `/api/admin/agents` | ADMIN | 担当AGENT候補一覧（ID・名前のみ） |
+
+補足（表内の※）:
+
+- ※1 `page`・`size`クエリでページ指定できます。取得できる範囲はロールによって変わります（[ロール別の機能](#ロール別の機能)を参照）
+- ※2 所有者・担当者・ADMINのみアクセスできます
+- ※3 本人が発行したOPENチケットのみ編集できます
+- ログアウトは未ログイン状態で呼び出しても安全に処理されます
 
 ## ローカル環境での起動方法
 
@@ -302,12 +319,18 @@ VITE_API_BASE_URL=http://localhost:8080
 
 | 変数名 | 用途 | 参照ファイル |
 | --- | --- | --- |
-| `PORT` | Renderなど、起動時にリッスンポートを指定するホスティング環境向け。未設定時は8080を使用する | `application.properties` |
-| `SPRING_PROFILES_ACTIVE` | 有効化するSpring Profile（本番では`prod`を指定してPostgreSQL接続・Cookieの`Secure`属性を有効化する） | Render環境設定 |
-| `DB_URL` | PostgreSQL接続URL（`prod`プロファイル使用時のみ必要） | `.env.example` / `application-prod.properties` |
-| `DB_USERNAME` | PostgreSQL接続ユーザー名（`prod`プロファイル使用時のみ必要） | `.env.example` / `application-prod.properties` |
-| `DB_PASSWORD` | PostgreSQL接続パスワード（`prod`プロファイル使用時のみ必要） | `.env.example` / `application-prod.properties` |
-| `VITE_API_BASE_URL` | フロントエンドが呼び出すバックエンドのベースURL（ローカル開発で別オリジンのAPIを指定するため） | `frontend/.env.example` |
+| `PORT` | 待受ポートの指定（未設定時は8080） | `application.properties` |
+| `SPRING_PROFILES_ACTIVE` | 有効化するSpring Profile（本番は`prod`） | Render環境設定 |
+| `DB_URL` | PostgreSQL接続URL | `application-prod.properties` |
+| `DB_USERNAME` | PostgreSQL接続ユーザー名 | `application-prod.properties` |
+| `DB_PASSWORD` | PostgreSQL接続パスワード | `application-prod.properties` |
+| `VITE_API_BASE_URL` | バックエンドのベースURL（ローカル開発用） | `frontend/.env.example` |
+
+補足:
+
+- `PORT`はRenderなど、起動時にリッスンポートを指定するホスティング環境向けです
+- `SPRING_PROFILES_ACTIVE`を`prod`にすると、PostgreSQL接続とCookieの`Secure`属性が有効になります
+- `DB_URL`・`DB_USERNAME`・`DB_PASSWORD`は`prod`プロファイル使用時のみ必要で、サンプルは`.env.example`にあります
 
 ## テスト
 
