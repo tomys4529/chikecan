@@ -22,8 +22,13 @@ export interface ErrorResponse {
   timestamp: string;
 }
 
+export type NameFormat = 'JAPANESE' | 'INTERNATIONAL';
+
 export interface RegisterRequest {
-  name: string;
+  nameFormat: NameFormat;
+  familyName: string;
+  givenName: string;
+  middleName: string;
   email: string;
   password: string;
 }

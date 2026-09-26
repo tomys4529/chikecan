@@ -23,7 +23,7 @@ public class UserResponse {
 
   public UserResponse(User user) {
     this.id = user.getId();
-    this.name = user.getName();
+    this.name = user.getDisplayName();
     this.email = user.getEmail();
     this.role = user.getRole();
     this.enabled = user.isEnabled();
@@ -37,7 +37,7 @@ public class UserResponse {
 
   public UserResponse(AppUserDetails principal) {
     this.id = principal.getId();
-    this.name = principal.getName();
+    this.name = principal.getDisplayName();
     this.email = principal.getUsername();
     this.role = principal.getRole();
     this.enabled = principal.isEnabled();

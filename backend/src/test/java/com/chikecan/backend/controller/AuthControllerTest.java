@@ -82,12 +82,26 @@ class AuthControllerTest {
     return new CsrfCredentials(cookie, cookie.getValue());
   }
 
+  /** 日本向け(familyName/givenNameのみ)の登録リクエストJSONを組み立てる。 */
+  private String japaneseRegisterBody(String familyName, String givenName, String email, String password) {
+    return String.format(
+        "{\"nameFormat\":\"JAPANESE\",\"familyName\":\"%s\",\"givenName\":\"%s\",\"email\":\"%s\",\"password\":\"%s\"}",
+        familyName, givenName, email, password);
+  }
+
+  /** 海外向け(familyName/givenName/middleName)の登録リクエストJSONを組み立てる。 */
+  private String internationalRegisterBody(String familyName, String givenName, String middleName, String email,
+      String password) {
+    return String.format(
+        "{\"nameFormat\":\"INTERNATIONAL\",\"familyName\":\"%s\",\"givenName\":\"%s\",\"middleName\":%s,"
+            + "\"email\":\"%s\",\"password\":\"%s\"}",
+        familyName, givenName, middleName == null ? "null" : "\"" + middleName + "\"", email, password);
+  }
+
   @Test
   void 正常な入力で登録するとusersへは保存されずpendingへ保存されメッセージが返る() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = """
-        {"name":"山田太郎","email":"YAMADA@EXAMPLE.COM","password":"Passw0rd123!"}
-        """;
+    String body = japaneseRegisterBody("山田", "太郎", "YAMADA@EXAMPLE.COM", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -102,7 +116,7 @@ class AuthControllerTest {
 
     // pending_registrationsへ、ハッシュ化済みパスワードで保存される。
     var pending = pendingRegistrationRepository.findByEmail("yamada@example.com").orElseThrow();
-    assertThat(pending.getName()).isEqualTo("山田太郎");
+    assertThat(pending.getName()).isEqualTo("山田 太郎");
     assertThat(pending.getPasswordHash()).startsWith("$2");
     assertThat(pending.getPasswordHash()).isNotEqualTo("Passw0rd123!");
     assertThat(passwordEncoder.matches("Passw0rd123!", pending.getPasswordHash())).isTrue();
@@ -114,9 +128,7 @@ class AuthControllerTest {
   @Test
   void パスワードが条件を満たさない場合は400になる() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = """
-        {"name":"田中花子","email":"tanaka@example.com","password":"short1"}
-        """;
+    String body = japaneseRegisterBody("田中", "花子", "tanaka@example.com", "short1");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -130,9 +142,7 @@ class AuthControllerTest {
   @Test
   void メールアドレス形式が不正な場合は400になる() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = """
-        {"name":"田中花子","email":"invalid-email","password":"Passw0rd123!"}
-        """;
+    String body = japaneseRegisterBody("田中", "花子", "invalid-email", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -147,9 +157,7 @@ class AuthControllerTest {
     seedRegisteredUser("既存ユーザー", "already-registered@example.com", "Passw0rd123!");
 
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = """
-        {"name":"佐藤二郎","email":"Already-Registered@Example.com","password":"Passw0rd123!"}
-        """;
+    String body = japaneseRegisterBody("佐藤", "二郎", "Already-Registered@Example.com", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -164,9 +172,7 @@ class AuthControllerTest {
   @Test
   void pending中の同じメールアドレスで再登録すると200になり既存pendingが更新される() throws Exception {
     CsrfCredentials firstCsrf = obtainCsrfToken();
-    String firstBody = """
-        {"name":"佐藤一郎","email":"duplicate-pending@example.com","password":"Passw0rd123!"}
-        """;
+    String firstBody = japaneseRegisterBody("佐藤", "一郎", "duplicate-pending@example.com", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(firstCsrf.cookie())
@@ -179,9 +185,7 @@ class AuthControllerTest {
     String firstTokenHash = firstPending.getTokenHash();
 
     CsrfCredentials secondCsrf = obtainCsrfToken();
-    String secondBody = """
-        {"name":"佐藤二郎","email":"Duplicate-Pending@Example.com","password":"NewPassw0rd1!"}
-        """;
+    String secondBody = japaneseRegisterBody("佐藤", "二郎", "Duplicate-Pending@Example.com", "NewPassw0rd1!");
 
     // 重複エラーにはならず、既存pendingが新しい入力内容・新しいtokenへ置き換わる。
     mockMvc.perform(post("/api/auth/register")
@@ -199,16 +203,14 @@ class AuthControllerTest {
 
     var updatedPending = pendingRegistrationRepository.findByEmail("duplicate-pending@example.com").orElseThrow();
     assertThat(updatedPending.getId()).isEqualTo(firstPending.getId());
-    assertThat(updatedPending.getName()).isEqualTo("佐藤二郎");
+    assertThat(updatedPending.getName()).isEqualTo("佐藤 二郎");
     // 古いtokenは新しいtokenへ置き換わり、既に無効になっている。
     assertThat(updatedPending.getTokenHash()).isNotEqualTo(firstTokenHash);
   }
 
   @Test
   void CSRFトークンなしでPOSTすると403になる() throws Exception {
-    String body = """
-        {"name":"無効ユーザー","email":"nocsrf@example.com","password":"Passw0rd123!"}
-        """;
+    String body = japaneseRegisterBody("無効", "ユーザー", "nocsrf@example.com", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .contentType(MediaType.APPLICATION_JSON)
@@ -217,14 +219,12 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value(403));
   }
 
-  // ===== 氏名・メールアドレスの文字数制限 =====
+  // ===== 氏名の入力形式・クロスフィールド検証 =====
 
   @Test
-  void 氏名が30文字なら登録できる() throws Exception {
+  void JAPANESEでmiddleNameを指定しなくても登録できる() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String name = "あ".repeat(30);
-    String body = String.format(
-        "{\"name\":\"%s\",\"email\":\"name30@example.com\",\"password\":\"Passw0rd123!\"}", name);
+    String body = japaneseRegisterBody("高橋", "健一", "japanese-ok@example.com", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -232,14 +232,45 @@ class AuthControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content(body))
         .andExpect(status().isOk());
+
+    var pending = pendingRegistrationRepository.findByEmail("japanese-ok@example.com").orElseThrow();
+    assertThat(pending.getFamilyName()).isEqualTo("高橋");
+    assertThat(pending.getGivenName()).isEqualTo("健一");
   }
 
   @Test
-  void 氏名が31文字だと400になる() throws Exception {
+  void JAPANESEでfamilyNameがないと400になる() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String name = "あ".repeat(31);
-    String body = String.format(
-        "{\"name\":\"%s\",\"email\":\"name31@example.com\",\"password\":\"Passw0rd123!\"}", name);
+    String body = "{\"nameFormat\":\"JAPANESE\",\"givenName\":\"健一\","
+        + "\"email\":\"japanese-no-family@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void JAPANESEでgivenNameがないと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = "{\"nameFormat\":\"JAPANESE\",\"familyName\":\"高橋\","
+        + "\"email\":\"japanese-no-given@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void familyNameが31文字だと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String tooLongFamilyName = "あ".repeat(31);
+    String body = japaneseRegisterBody(tooLongFamilyName, "太郎", "family-31@example.com", "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -247,8 +278,135 @@ class AuthControllerTest {
             .contentType(MediaType.APPLICATION_JSON)
             .content(body))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message").value("氏名は30文字以内で入力してください"));
+        .andExpect(jsonPath("$.message").value("姓は30文字以内で入力してください"));
   }
+
+  @Test
+  void givenNameが31文字だと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String tooLongGivenName = "あ".repeat(31);
+    String body = japaneseRegisterBody("山田", tooLongGivenName, "given-31@example.com", "Passw0rd123!");
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("名は30文字以内で入力してください"));
+  }
+
+  @Test
+  void INTERNATIONALでmiddleNameなしでも登録できる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = internationalRegisterBody("Smith", "John", null, "international-no-middle@example.com",
+        "Passw0rd123!");
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk());
+
+    var pending = pendingRegistrationRepository.findByEmail("international-no-middle@example.com").orElseThrow();
+    assertThat(pending.getFamilyName()).isEqualTo("Smith");
+    assertThat(pending.getGivenName()).isEqualTo("John");
+    assertThat(pending.getMiddleName()).isNull();
+    assertThat(pending.getName()).isEqualTo("John Smith");
+  }
+
+  @Test
+  void INTERNATIONALでmiddleNameありで登録できる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = internationalRegisterBody("Smith", "John", "Michael", "international-with-middle@example.com",
+        "Passw0rd123!");
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk());
+
+    var pending = pendingRegistrationRepository.findByEmail("international-with-middle@example.com").orElseThrow();
+    assertThat(pending.getMiddleName()).isEqualTo("Michael");
+    assertThat(pending.getName()).isEqualTo("John Michael Smith");
+  }
+
+  @Test
+  void INTERNATIONALでgivenNameがないと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = "{\"nameFormat\":\"INTERNATIONAL\",\"familyName\":\"Smith\","
+        + "\"email\":\"international-no-given@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void INTERNATIONALでfamilyNameがないと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = "{\"nameFormat\":\"INTERNATIONAL\",\"givenName\":\"John\","
+        + "\"email\":\"international-no-family@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void middleNameが31文字だと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String tooLongMiddleName = "a".repeat(31);
+    String body = internationalRegisterBody("Smith", "John", tooLongMiddleName, "middle-31@example.com",
+        "Passw0rd123!");
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value("ミドルネームは30文字以内で入力してください"));
+  }
+
+  @Test
+  void nameFormatにLEGACYを指定すると400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = "{\"nameFormat\":\"LEGACY\",\"familyName\":\"山田\",\"givenName\":\"太郎\","
+        + "\"email\":\"legacy-not-allowed@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void nameFormatがないと400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    String body = "{\"familyName\":\"山田\",\"givenName\":\"太郎\","
+        + "\"email\":\"no-name-format@example.com\",\"password\":\"Passw0rd123!\"}";
+
+    mockMvc.perform(post("/api/auth/register")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isBadRequest());
+  }
+
+  // ===== メールアドレスの文字数制限 =====
 
   @Test
   void メールアドレスが100文字以内なら登録できる() throws Exception {
@@ -256,8 +414,7 @@ class AuthControllerTest {
     // ローカル部はRFCの実務上の上限(64文字)以内、ドメインの各ラベルも63文字以内に収めつつ
     // 合計100文字ちょうどにする。ローカル部20 + "@"(1) + (60+1+14+".com"(4))=79 = 100文字。
     String email = "a".repeat(20) + "@" + "b".repeat(60) + "." + "b".repeat(14) + ".com";
-    String body = String.format(
-        "{\"name\":\"メール百文字\",\"email\":\"%s\",\"password\":\"Passw0rd123!\"}", email);
+    String body = japaneseRegisterBody("メール", "百文字", email, "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -272,8 +429,7 @@ class AuthControllerTest {
     CsrfCredentials csrf = obtainCsrfToken();
     // ローカル部20 + "@"(1) + (60+1+15+".com"(4))=80 = 101文字。
     String email = "a".repeat(20) + "@" + "b".repeat(60) + "." + "b".repeat(15) + ".com";
-    String body = String.format(
-        "{\"name\":\"メール百一文字\",\"email\":\"%s\",\"password\":\"Passw0rd123!\"}", email);
+    String body = japaneseRegisterBody("メール", "百一文字", email, "Passw0rd123!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -289,9 +445,7 @@ class AuthControllerTest {
   @Test
   void 大文字小文字数字記号を含むパスワードで登録できる() throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = """
-        {"name":"強度太郎","email":"strong-password@example.com","password":"Password1!"}
-        """;
+    String body = japaneseRegisterBody("強度", "太郎", "strong-password@example.com", "Password1!");
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())
@@ -330,8 +484,7 @@ class AuthControllerTest {
 
   private void assertPasswordRejected(String email, String password) throws Exception {
     CsrfCredentials csrf = obtainCsrfToken();
-    String body = String.format(
-        "{\"name\":\"バリデーション太郎\",\"email\":\"%s\",\"password\":\"%s\"}", email, password);
+    String body = japaneseRegisterBody("バリデーション", "太郎", email, password);
 
     mockMvc.perform(post("/api/auth/register")
             .cookie(csrf.cookie())

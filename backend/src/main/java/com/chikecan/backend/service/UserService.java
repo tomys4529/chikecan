@@ -14,7 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.UserResponse;
+import com.chikecan.backend.entity.DisplayName;
 import com.chikecan.backend.entity.EmailChangeRequest;
+import com.chikecan.backend.entity.NameFormat;
 import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
@@ -96,12 +98,24 @@ public class UserService {
     String tokenHash = VerificationTokenGenerator.hash(rawToken);
     Instant expiresAt = Instant.now().plus(TOKEN_VALIDITY);
 
+    NameFormat nameFormat = request.getNameFormat();
+    // 構造化されたnameFormat/familyName/givenName/middleNameから、LEGACY互換のname列
+    // (NOT NULL)へ入れる表示名相当の値を組み立てる。新規登録ではLEGACYを選べないため、
+    // legacyNameフォールバック(第2引数)が実際に使われることはない。
+    String legacyName = DisplayName.build(nameFormat, null, request.getFamilyName(), request.getGivenName(),
+        request.getMiddleName());
+
     PendingRegistration pending = pendingRegistrationRepository.findByEmail(normalizedEmail)
-        .orElseGet(() -> new PendingRegistration(request.getName(), normalizedEmail, passwordHash, tokenHash, expiresAt));
-    pending.setName(request.getName());
+        .orElseGet(() -> new PendingRegistration(legacyName, normalizedEmail, passwordHash, tokenHash, expiresAt,
+            nameFormat, request.getFamilyName(), request.getGivenName(), request.getMiddleName()));
+    pending.setName(legacyName);
     pending.setPasswordHash(passwordHash);
     pending.setTokenHash(tokenHash);
     pending.setExpiresAt(expiresAt);
+    pending.setNameFormat(nameFormat);
+    pending.setFamilyName(request.getFamilyName());
+    pending.setGivenName(request.getGivenName());
+    pending.setMiddleName(request.getMiddleName());
     pendingRegistrationRepository.save(pending);
 
     verificationMailService.sendVerificationEmail(normalizedEmail, rawToken);
@@ -129,7 +143,8 @@ public class UserService {
       throw new InvalidVerificationTokenException(INVALID_TOKEN_MESSAGE);
     }
 
-    User user = new User(pending.getName(), pending.getEmail(), pending.getPasswordHash(), Role.USER, true);
+    User user = new User(pending.getName(), pending.getEmail(), pending.getPasswordHash(), Role.USER, true,
+        pending.getNameFormat(), pending.getFamilyName(), pending.getGivenName(), pending.getMiddleName());
     userRepository.save(user);
     // 削除によりtokenは再利用できなくなる。
     pendingRegistrationRepository.delete(pending);
