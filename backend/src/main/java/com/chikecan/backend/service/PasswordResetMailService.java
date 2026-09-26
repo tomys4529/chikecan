@@ -2,11 +2,7 @@ package com.chikecan.backend.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,27 +13,26 @@ import org.springframework.stereotype.Service;
  *
  * app.mail.enabled=falseの環境(ローカル開発)では実際には送信せず、
  * 開発者が動作確認できるようリセットURLをログへ出力するだけにとどめる。
- * メール送信(MailException)はここで吸収し、呼び出し元(UserService)へ伝播させない。
- * requestPasswordResetは@Transactionalであり、例外を伝播させるとtoken保存自体も
- * rollbackされてしまう。それでは「メール送信に失敗してもtokenは残し、再度要求すれば
- * 新しいメールを送れる」という設計意図に反するため、意図的に例外を握りつぶす。
+ * 実際の送信(Resend REST API呼び出し)はResendMailClientへ委譲する。
+ * ResendMailClient.sendは内部で例外を吸収し呼び出し元へ伝播させないため、
+ * ここでは追加のtry/catchを行わない。
  */
 @Service
 public class PasswordResetMailService {
 
   private static final Logger log = LoggerFactory.getLogger(PasswordResetMailService.class);
 
-  private final ObjectProvider<JavaMailSender> mailSenderProvider;
+  private final ResendMailClient resendMailClient;
   private final boolean mailEnabled;
   private final String mailFrom;
   private final String appBaseUrl;
 
   public PasswordResetMailService(
-      ObjectProvider<JavaMailSender> mailSenderProvider,
+      ResendMailClient resendMailClient,
       @Value("${app.mail.enabled}") boolean mailEnabled,
       @Value("${app.mail.from}") String mailFrom,
       @Value("${app.base-url}") String appBaseUrl) {
-    this.mailSenderProvider = mailSenderProvider;
+    this.resendMailClient = resendMailClient;
     this.mailEnabled = mailEnabled;
     this.mailFrom = mailFrom;
     this.appBaseUrl = appBaseUrl;
@@ -47,25 +42,13 @@ public class PasswordResetMailService {
     String resetUrl = buildResetUrl(rawToken);
 
     if (!mailEnabled) {
-      // ローカル開発用: 実SMTPを必須にしないため、送信の代わりにログへURLを出力する。
+      // ローカル開発用: 実送信を必須にしないため、送信の代わりにログへURLを出力する。
       // 本番(mailEnabled=true)ではこのログ出力自体を行わない。
       log.info("[開発用ログ出力] パスワード再設定URL(宛先: {}): {}", toEmail, resetUrl);
       return;
     }
 
-    SimpleMailMessage message = new SimpleMailMessage();
-    message.setTo(toEmail);
-    message.setFrom(mailFrom);
-    message.setSubject("【chikecan】パスワード再設定のご案内");
-    message.setText(buildMailBody(resetUrl));
-
-    try {
-      mailSenderProvider.getObject().send(message);
-    } catch (MailException ex) {
-      // 呼び出し元のトランザクションをrollbackさせないよう、ここで例外を吸収して
-      // ログにのみ記録する。ユーザーは再度パスワードリセットを要求できる。
-      log.error("パスワード再設定メールの送信に失敗しました(宛先: {})", toEmail, ex);
-    }
+    resendMailClient.send(toEmail, mailFrom, "【chikecan】パスワード再設定のご案内", buildMailBody(resetUrl));
   }
 
   private String buildResetUrl(String rawToken) {
