@@ -77,4 +77,28 @@ class GlobalExceptionHandlerTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
   }
+
+  @Test
+  void ConstraintViolationExceptionでuk_email_change_requests_new_emailを取得した場合は409になる() {
+    ConstraintViolationException cause = new ConstraintViolationException(
+        "could not execute statement", new SQLException("duplicate key"), "uk_email_change_requests_new_email");
+    DataIntegrityViolationException ex = new DataIntegrityViolationException("insert failed", cause);
+
+    ResponseEntity<ErrorResponse> response = handler.handleDataIntegrityViolation(ex, request());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(response.getBody().getMessage()).isEqualTo("このメールアドレスは既に使用されています");
+  }
+
+  @Test
+  void uk_email_change_requests_new_emailも制約名の大文字小文字が異なっても409になる() {
+    ConstraintViolationException cause = new ConstraintViolationException(
+        "could not execute statement", new SQLException("duplicate key"), "UK_EMAIL_CHANGE_REQUESTS_NEW_EMAIL");
+    DataIntegrityViolationException ex = new DataIntegrityViolationException("insert failed", cause);
+
+    ResponseEntity<ErrorResponse> response = handler.handleDataIntegrityViolation(ex, request());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(response.getBody().getMessage()).isEqualTo("このメールアドレスは既に使用されています");
+  }
 }

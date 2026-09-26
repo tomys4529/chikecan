@@ -14,13 +14,18 @@ import org.springframework.transaction.annotation.Transactional;
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.UserResponse;
+import com.chikecan.backend.entity.EmailChangeRequest;
 import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.DuplicateEmailException;
+import com.chikecan.backend.exception.InvalidCredentialsException;
+import com.chikecan.backend.exception.InvalidEmailChangeTokenException;
 import com.chikecan.backend.exception.InvalidPasswordResetTokenException;
 import com.chikecan.backend.exception.InvalidVerificationTokenException;
+import com.chikecan.backend.exception.SamePasswordException;
+import com.chikecan.backend.repository.EmailChangeRequestRepository;
 import com.chikecan.backend.repository.PasswordResetTokenRepository;
 import com.chikecan.backend.repository.PendingRegistrationRepository;
 import com.chikecan.backend.repository.UserRepository;
@@ -37,25 +42,35 @@ public class UserService {
   private static final Duration PASSWORD_RESET_TOKEN_VALIDITY = Duration.ofHours(1);
   private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE = "再設定リンクが無効または期限切れです";
 
+  // メールアドレス変更もパスワードリセットと同様に機密性が高いため、有効期限を短くする。
+  private static final Duration EMAIL_CHANGE_TOKEN_VALIDITY = Duration.ofHours(1);
+  private static final String INVALID_EMAIL_CHANGE_TOKEN_MESSAGE = "変更リンクが無効または期限切れです";
+
   private final UserRepository userRepository;
   private final PendingRegistrationRepository pendingRegistrationRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
+  private final EmailChangeRequestRepository emailChangeRequestRepository;
   private final PasswordEncoder passwordEncoder;
   private final VerificationMailService verificationMailService;
   private final PasswordResetMailService passwordResetMailService;
+  private final EmailChangeMailService emailChangeMailService;
 
   public UserService(UserRepository userRepository,
       PendingRegistrationRepository pendingRegistrationRepository,
       PasswordResetTokenRepository passwordResetTokenRepository,
+      EmailChangeRequestRepository emailChangeRequestRepository,
       PasswordEncoder passwordEncoder,
       VerificationMailService verificationMailService,
-      PasswordResetMailService passwordResetMailService) {
+      PasswordResetMailService passwordResetMailService,
+      EmailChangeMailService emailChangeMailService) {
     this.userRepository = userRepository;
     this.pendingRegistrationRepository = pendingRegistrationRepository;
     this.passwordResetTokenRepository = passwordResetTokenRepository;
+    this.emailChangeRequestRepository = emailChangeRequestRepository;
     this.passwordEncoder = passwordEncoder;
     this.verificationMailService = verificationMailService;
     this.passwordResetMailService = passwordResetMailService;
+    this.emailChangeMailService = emailChangeMailService;
   }
 
   /**
@@ -204,6 +219,111 @@ public class UserService {
     userRepository.save(user);
     // 削除によりtokenは再利用できなくなる。
     passwordResetTokenRepository.delete(resetToken);
+  }
+
+  /**
+   * ログイン中ユーザー自身によるパスワード変更。現在のパスワードの一致を必須とし、
+   * 新しいパスワードが現在のパスワードと同じ場合は拒否する。
+   */
+  @Transactional
+  public void changePassword(Long userId, String currentPassword, String newPassword) {
+    User user = userRepository.findById(userId)
+        .orElseThrow(() -> new UsernameNotFoundException("ユーザーが見つかりません"));
+
+    if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException("現在のパスワードが正しくありません");
+    }
+    if (currentPassword.equals(newPassword)) {
+      throw new SamePasswordException("新しいパスワードは現在のパスワードと異なるものにしてください");
+    }
+
+    user.setPasswordHash(passwordEncoder.encode(newPassword));
+    userRepository.save(user);
+  }
+
+  /**
+   * ログイン中ユーザー自身によるメールアドレス変更申請。users.emailは即時更新せず、
+   * email_change_requestsへ申請内容を保存したうえで新しいメールアドレス宛に確認メールを送る。
+   * 同一ユーザーの再申請時は既存申請を上書きし、古いtokenを即座に無効化する。
+   */
+  @Transactional
+  public void requestEmailChange(Long userId, String newEmail, String currentPassword) {
+    // Spring Scheduler等の定期実行は設けず、新規の変更申請のたびに期限切れ申請を
+    // 削除する遅延クリーンアップ方式にする。
+    emailChangeRequestRepository.deleteByExpiresAtBefore(Instant.now());
+
+    User user = userRepository.findById(userId)
+        .orElseThrow(() -> new UsernameNotFoundException("ユーザーが見つかりません"));
+
+    if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+      throw new InvalidCredentialsException("現在のパスワードが正しくありません");
+    }
+
+    String normalizedNewEmail = normalize(newEmail);
+
+    if (normalizedNewEmail.equals(user.getEmail())) {
+      throw new DuplicateEmailException("新しいメールアドレスが現在のメールアドレスと同じです");
+    }
+    if (userRepository.findByEmail(normalizedNewEmail).isPresent()) {
+      throw new DuplicateEmailException("このメールアドレスは既に使用されています");
+    }
+    if (pendingRegistrationRepository.findByEmail(normalizedNewEmail).isPresent()) {
+      throw new DuplicateEmailException("このメールアドレスは既に使用されています");
+    }
+    boolean usedByAnotherUsersRequest = emailChangeRequestRepository.findByNewEmail(normalizedNewEmail)
+        .filter(existing -> !existing.getUserId().equals(userId))
+        .isPresent();
+    if (usedByAnotherUsersRequest) {
+      throw new DuplicateEmailException("このメールアドレスは既に使用されています");
+    }
+
+    String rawToken = VerificationTokenGenerator.generateRawToken();
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    Instant expiresAt = Instant.now().plus(EMAIL_CHANGE_TOKEN_VALIDITY);
+
+    EmailChangeRequest request = emailChangeRequestRepository.findByUserId(userId)
+        .orElseGet(() -> new EmailChangeRequest(userId, normalizedNewEmail, tokenHash, expiresAt));
+    request.setNewEmail(normalizedNewEmail);
+    request.setTokenHash(tokenHash);
+    request.setExpiresAt(expiresAt);
+    emailChangeRequestRepository.save(request);
+
+    emailChangeMailService.sendEmailChangeEmail(normalizedNewEmail, rawToken);
+  }
+
+  /**
+   * メール内リンクのtokenを検証し、成功した場合のみusers.emailを更新する。
+   * token検索・email更新・パスワードリセットtoken無効化・申請削除を同一トランザクションで
+   * 行い、使用済み・期限切れのtokenでは絶対に更新できないようにする。
+   * ログイン有無に関わらず利用可能(メール内URLを別端末で開く可能性があるため)。
+   */
+  @Transactional
+  public void confirmEmailChange(String rawToken) {
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    EmailChangeRequest request = emailChangeRequestRepository.findByTokenHash(tokenHash)
+        .orElseThrow(() -> new InvalidEmailChangeTokenException(INVALID_EMAIL_CHANGE_TOKEN_MESSAGE));
+
+    if (request.isExpired(Instant.now())) {
+      throw new InvalidEmailChangeTokenException(INVALID_EMAIL_CHANGE_TOKEN_MESSAGE);
+    }
+
+    User user = userRepository.findById(request.getUserId())
+        .orElseThrow(() -> new InvalidEmailChangeTokenException(INVALID_EMAIL_CHANGE_TOKEN_MESSAGE));
+
+    // confirm直前に別ユーザーが同じメールアドレスを取得していないか再確認する。該当する場合は
+    // このtokenの前提(new_emailが空いていること)が崩れているため、申請ごと削除し無効化する。
+    if (userRepository.findByEmail(request.getNewEmail()).isPresent()) {
+      emailChangeRequestRepository.delete(request);
+      throw new InvalidEmailChangeTokenException(INVALID_EMAIL_CHANGE_TOKEN_MESSAGE);
+    }
+
+    user.setEmail(request.getNewEmail());
+    userRepository.save(user);
+    // 旧メールアドレス宛に発行済みのパスワードリセットtokenが残っていると、
+    // 変更後も旧メール経由のリセットリンクが有効になってしまうため、ここで無効化する。
+    passwordResetTokenRepository.deleteByUserId(user.getId());
+    // 削除によりtokenは再利用できなくなる。
+    emailChangeRequestRepository.delete(request);
   }
 
   /**

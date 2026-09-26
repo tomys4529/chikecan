@@ -50,6 +50,20 @@ export interface PasswordResetConfirmRequest {
   password: string;
 }
 
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangeEmailRequest {
+  newEmail: string;
+  currentPassword: string;
+}
+
+export interface ConfirmEmailChangeRequest {
+  token: string;
+}
+
 /** message文字列のみを返す軽量なAPIレスポンス(register/verify-email/resend-verification共通)。 */
 export interface MessageResponse {
   message: string;
