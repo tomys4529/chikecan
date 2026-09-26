@@ -98,7 +98,7 @@ export function RegisterPage() {
         </p>
         <form onSubmit={handleSubmit} noValidate className="form">
           <div className="form-field" role="radiogroup" aria-label="氏名の入力形式">
-            <label>
+            <label className="radio-option">
               <input
                 type="radio"
                 name="name-format"
@@ -108,7 +108,7 @@ export function RegisterPage() {
               />
               日本向け
             </label>
-            <label>
+            <label className="radio-option">
               <input
                 type="radio"
                 name="name-format"

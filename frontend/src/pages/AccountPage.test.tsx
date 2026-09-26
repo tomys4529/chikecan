@@ -80,7 +80,7 @@ describe('AccountPage', () => {
     expect(screen.getByText('current@example.com')).toBeInTheDocument();
   });
 
-  it('パスワード変更フォームに正常な値を入力すると成功メッセージを表示する', async () => {
+  it('パスワード変更に成功するとログイン状態がクリアされログイン画面へ遷移する', async () => {
     renderAccountPage(authenticatedFetchImpl());
     const user = userEvent.setup();
 
@@ -90,7 +90,9 @@ describe('AccountPage', () => {
     await user.type(screen.getByLabelText('新しいパスワード（確認）'), 'NewPassw0rd1!');
     await user.click(screen.getByRole('button', { name: 'パスワードを変更' }));
 
-    expect(await screen.findByText('パスワードを変更しました。')).toBeInTheDocument();
+    // サーバー側で既存セッションが失効させられるため、フロントも直ちにログイン画面へ遷移する
+    // (遷移後の案内メッセージ自体はLoginPage側の責務としてLoginPage.test.tsxで検証済み)。
+    expect(await screen.findByText('ログイン画面')).toBeInTheDocument();
   });
 
   it('弱い新しいパスワードの場合はAPIを呼ばずエラーメッセージを表示する', async () => {
@@ -170,6 +172,9 @@ describe('AccountPage', () => {
     await user.click(screen.getByRole('button', { name: 'パスワードを変更' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('現在のパスワードが正しくありません');
+    // API失敗時はログイン状態をクリアせず、ログイン画面へも遷移しない。
+    expect(screen.queryByText('ログイン画面')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'パスワードを変更' })).toBeInTheDocument();
   });
 
   it('メールアドレス変更フォームに正常な値を入力すると案内メッセージを表示し現在のメールアドレス表示は変わらない', async () => {
