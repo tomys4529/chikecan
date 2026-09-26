@@ -95,4 +95,19 @@ describe('LoginPage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('メールアドレスまたはパスワードが正しくありません');
   });
+
+  it('パスワードを忘れた方のリンクが表示される', async () => {
+    setupInitialUnauthenticated();
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
+    expect(screen.getByRole('link', { name: 'パスワードを忘れた方' })).toHaveAttribute('href', '/forgot-password');
+  });
 });

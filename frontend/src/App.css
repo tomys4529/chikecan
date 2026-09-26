@@ -100,6 +100,23 @@
   color: var(--color-text);
 }
 
+/* 必須項目のラベル末尾に赤いアスタリスクを付ける(装飾目的のためlabelのテキスト内容には含めない)。 */
+.form-field label.required::after {
+  content: ' *';
+  color: var(--color-danger);
+}
+
+/* 「* は必須項目です」等、実際のテキストとして「*」を表示する箇所用。 */
+.required-mark {
+  color: var(--color-danger);
+}
+
+.form-hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
 .form-field__counter {
   align-self: flex-end;
   font-size: 12px;

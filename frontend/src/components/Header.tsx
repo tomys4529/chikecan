@@ -20,6 +20,7 @@ export function Header() {
       {status === 'authenticated' && user && (
         <span className="app-header__user">
           {user.name}様({user.role}){' '}
+          <Link to="/account">アカウント設定</Link>{' '}
           <button type="button" className="btn btn--secondary" onClick={() => void handleLogout()}>
             ログアウト
           </button>

@@ -53,7 +53,9 @@ public class SecurityConfig {
     http
         .authorizeHttpRequests(auth -> auth
             .requestMatchers("/api/health", "/api/auth/csrf", "/api/auth/register",
-                "/api/auth/login", "/api/auth/logout", "/api/auth/verify-email", "/api/auth/resend-verification")
+                "/api/auth/login", "/api/auth/logout", "/api/auth/verify-email", "/api/auth/resend-verification",
+                "/api/auth/password-reset/request", "/api/auth/password-reset/confirm",
+                "/api/account/email-change/confirm")
             .permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/agent/**").hasAnyRole("AGENT", "ADMIN")

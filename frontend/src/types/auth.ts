@@ -22,8 +22,13 @@ export interface ErrorResponse {
   timestamp: string;
 }
 
+export type NameFormat = 'JAPANESE' | 'INTERNATIONAL';
+
 export interface RegisterRequest {
-  name: string;
+  nameFormat: NameFormat;
+  familyName: string;
+  givenName: string;
+  middleName: string;
   email: string;
   password: string;
 }
@@ -39,6 +44,29 @@ export interface VerifyEmailRequest {
 
 export interface ResendVerificationRequest {
   email: string;
+}
+
+export interface PasswordResetRequest {
+  email: string;
+}
+
+export interface PasswordResetConfirmRequest {
+  token: string;
+  password: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface ChangeEmailRequest {
+  newEmail: string;
+  currentPassword: string;
+}
+
+export interface ConfirmEmailChangeRequest {
+  token: string;
 }
 
 /** message文字列のみを返す軽量なAPIレスポンス(register/verify-email/resend-verification共通)。 */

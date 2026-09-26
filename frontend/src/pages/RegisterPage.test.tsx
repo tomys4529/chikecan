@@ -27,6 +27,16 @@ function mockUnauthenticatedInit(fetchMock: ReturnType<typeof vi.mocked<typeof f
   });
 }
 
+function renderRegisterPage() {
+  return render(
+    <MemoryRouter initialEntries={['/register']}>
+      <AuthProvider>
+        <RegisterPage />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
 describe('RegisterPage', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -36,23 +46,165 @@ describe('RegisterPage', () => {
     vi.unstubAllGlobals();
   });
 
-  it('未入力項目があるとエラーメッセージを表示する', async () => {
+  it('未入力項目があると姓名の入力を促すエラーメッセージを表示する(デフォルトは日本向け)', async () => {
     const fetchMock = vi.mocked(fetch);
     mockUnauthenticatedInit(fetchMock);
     const user = userEvent.setup();
 
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: '登録する' }));
 
+    expect(await screen.findByRole('alert')).toHaveTextContent('姓と名を入力してください');
+  });
+
+  it('姓名は入力済みだがメールアドレス等が未入力の場合は全ての項目を入力してくださいと表示する', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    const user = userEvent.setup();
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
     expect(await screen.findByRole('alert')).toHaveTextContent('全ての項目を入力してください');
+  });
+
+  it('フォーム上部に必須項目の説明(* は必須項目です)が表示される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    expect(screen.getByText('は必須項目です')).toBeInTheDocument();
+  });
+
+  it('姓・名・メールアドレス・パスワード関連のラベルには必須マークのCSSクラスが付与される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    expect(screen.getByText('姓')).toHaveClass('required');
+    expect(screen.getByText('名')).toHaveClass('required');
+    expect(screen.getByText('メールアドレス')).toHaveClass('required');
+    expect(screen.getByText('パスワード')).toHaveClass('required');
+    expect(screen.getByText('パスワード（確認）')).toHaveClass('required');
+  });
+
+  it('海外向けのFirst name/Last nameには必須マーク、Middle nameには任意の表示がある', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    const user = userEvent.setup();
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+
+    expect(screen.getByText('First name')).toHaveClass('required');
+    expect(screen.getByText('Last name')).toHaveClass('required');
+    expect(screen.getByText('Middle name（任意）')).not.toHaveClass('required');
+  });
+
+  it('デフォルトでは日本向け(姓・名)の入力欄が表示される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    expect(screen.getByRole('radio', { name: '日本向け' })).toBeChecked();
+    expect(screen.getByLabelText('姓')).toBeInTheDocument();
+    expect(screen.getByLabelText('名')).toBeInTheDocument();
+    expect(screen.queryByLabelText('First name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Last name')).not.toBeInTheDocument();
+  });
+
+  it('海外向けへ切り替えるとFirst name/Middle name/Last nameの入力欄が表示される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    const user = userEvent.setup();
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+
+    expect(screen.getByLabelText('First name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Middle name（任意）')).toBeInTheDocument();
+    expect(screen.getByLabelText('Last name')).toBeInTheDocument();
+    expect(screen.queryByLabelText('姓')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('名')).not.toBeInTheDocument();
+  });
+
+  it('日本向けで姓のみ未入力だとエラーメッセージを表示しAPIを呼ばない', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    let registerCalled = false;
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401));
+      }
+      if (url.endsWith('/api/auth/register')) {
+        registerCalled = true;
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('名'), '太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'no-family@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('姓と名を入力してください');
+    expect(registerCalled).toBe(false);
+  });
+
+  it('海外向けでLast nameのみ未入力だとエラーメッセージを表示しAPIを呼ばない', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    let registerCalled = false;
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401));
+      }
+      if (url.endsWith('/api/auth/register')) {
+        registerCalled = true;
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+    await user.type(screen.getByLabelText('First name'), 'John');
+    await user.type(screen.getByLabelText('メールアドレス'), 'no-last@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('First nameとLast nameを入力してください');
+    expect(registerCalled).toBe(false);
   });
 
   it('重複メールなどサーバーエラーを表示する', async () => {
@@ -80,22 +232,182 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'dup@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
     await user.click(screen.getByRole('button', { name: '登録する' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('このメールアドレスは既に登録されています');
+  });
+
+  it('日本向けで登録すると正しいPayload(familyName/givenName、middleNameは空文字)が送信される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let sentBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        sentBody = JSON.parse((init as RequestInit).body as string);
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'japanese-payload@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await waitFor(() => expect(sentBody).toBeDefined());
+    expect(sentBody).toEqual({
+      nameFormat: 'JAPANESE',
+      familyName: '山田',
+      givenName: '太郎',
+      middleName: '',
+      email: 'japanese-payload@example.com',
+      password: 'Passw0rd123!',
+    });
+  });
+
+  it('海外向けで登録すると正しいPayload(familyName/givenName/middleName)が送信される', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let sentBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        sentBody = JSON.parse((init as RequestInit).body as string);
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+    await user.type(screen.getByLabelText('First name'), 'John');
+    await user.type(screen.getByLabelText('Middle name（任意）'), 'Michael');
+    await user.type(screen.getByLabelText('Last name'), 'Smith');
+    await user.type(screen.getByLabelText('メールアドレス'), 'international-payload@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await waitFor(() => expect(sentBody).toBeDefined());
+    expect(sentBody).toEqual({
+      nameFormat: 'INTERNATIONAL',
+      familyName: 'Smith',
+      givenName: 'John',
+      middleName: 'Michael',
+      email: 'international-payload@example.com',
+      password: 'Passw0rd123!',
+    });
+  });
+
+  it('海外向けでMiddle nameを入力しなくても登録できる', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let sentBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        sentBody = JSON.parse((init as RequestInit).body as string);
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+    await user.type(screen.getByLabelText('First name'), 'John');
+    await user.type(screen.getByLabelText('Last name'), 'Smith');
+    await user.type(screen.getByLabelText('メールアドレス'), 'international-no-middle@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await waitFor(() => expect(sentBody).toBeDefined());
+    expect(sentBody?.middleName).toBe('');
+    expect(
+      await screen.findByText('確認メールを送信しました。メール内のリンクから本登録を完了してください。'),
+    ).toBeInTheDocument();
+  });
+
+  it('日本向けに戻して送信すると海外向けで入力していたmiddleNameは送信されない', async () => {
+    const fetchMock = vi.mocked(fetch);
+    let sentBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) {
+        return Promise.resolve(jsonResponse({ token: 't', headerName: 'X-XSRF-TOKEN', parameterName: '_csrf' }));
+      }
+      if (url.endsWith('/api/auth/me')) {
+        return Promise.resolve(
+          jsonResponse({ status: 401, error: 'Unauthorized', message: '認証が必要です', path: '/api/auth/me', timestamp: '2026-01-01T00:00:00Z' }, 401),
+        );
+      }
+      if (url.endsWith('/api/auth/register')) {
+        sentBody = JSON.parse((init as RequestInit).body as string);
+        return Promise.resolve(jsonResponse({ message: 'ok' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+    await user.type(screen.getByLabelText('Middle name（任意）'), 'Michael');
+    // 日本向けへ戻す(値を消さなくても送信Payloadは形式に合わせる)。
+    await user.click(screen.getByRole('radio', { name: '日本向け' }));
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
+    await user.type(screen.getByLabelText('メールアドレス'), 'switch-back@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
+    await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
+    await user.click(screen.getByRole('button', { name: '登録する' }));
+
+    await waitFor(() => expect(sentBody).toBeDefined());
+    expect(sentBody?.nameFormat).toBe('JAPANESE');
+    expect(sentBody?.middleName).toBe('');
   });
 
   it('登録成功後は自動ログインせず確認メール案内画面を表示する', async () => {
@@ -121,16 +433,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'new@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
@@ -163,16 +470,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'prefill@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
@@ -206,16 +508,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'resend-from-register@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
@@ -254,16 +551,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'resend-error@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123!');
@@ -302,16 +594,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'weak-password@example.com');
     await user.type(screen.getByLabelText('パスワード'), weakPassword);
     await user.type(screen.getByLabelText('パスワード（確認）'), weakPassword);
@@ -345,16 +632,11 @@ describe('RegisterPage', () => {
     });
 
     const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    await user.type(screen.getByLabelText('氏名'), '山田太郎');
+    await user.type(screen.getByLabelText('姓'), '山田');
+    await user.type(screen.getByLabelText('名'), '太郎');
     await user.type(screen.getByLabelText('メールアドレス'), 'mismatch@example.com');
     await user.type(screen.getByLabelText('パスワード'), 'Passw0rd123!');
     await user.type(screen.getByLabelText('パスワード（確認）'), 'Passw0rd123?');
@@ -364,36 +646,40 @@ describe('RegisterPage', () => {
     expect(registerCalled).toBe(false);
   });
 
-  it('氏名・メールアドレス・パスワードの各入力欄に文字数制限が設定されている', async () => {
+  it('姓・名・メールアドレス・パスワードの各入力欄に文字数制限が設定されている', async () => {
     const fetchMock = vi.mocked(fetch);
     mockUnauthenticatedInit(fetchMock);
 
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
-    expect(screen.getByLabelText('氏名')).toHaveAttribute('maxLength', '30');
+    expect(screen.getByLabelText('姓')).toHaveAttribute('maxLength', '30');
+    expect(screen.getByLabelText('名')).toHaveAttribute('maxLength', '30');
     expect(screen.getByLabelText('メールアドレス')).toHaveAttribute('maxLength', '100');
     expect(screen.getByLabelText('パスワード')).toHaveAttribute('maxLength', '72');
     expect(screen.getByLabelText('パスワード（確認）')).toHaveAttribute('maxLength', '72');
+  });
+
+  it('海外向けのFirst name/Middle name/Last nameにも30文字の制限が設定されている', async () => {
+    const fetchMock = vi.mocked(fetch);
+    mockUnauthenticatedInit(fetchMock);
+    const user = userEvent.setup();
+
+    renderRegisterPage();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
+    await user.click(screen.getByRole('radio', { name: '海外向け' }));
+
+    expect(screen.getByLabelText('First name')).toHaveAttribute('maxLength', '30');
+    expect(screen.getByLabelText('Middle name（任意）')).toHaveAttribute('maxLength', '30');
+    expect(screen.getByLabelText('Last name')).toHaveAttribute('maxLength', '30');
   });
 
   it('パスワード確認欄にもnew-passwordのautoCompleteが設定されている', async () => {
     const fetchMock = vi.mocked(fetch);
     mockUnauthenticatedInit(fetchMock);
 
-    render(
-      <MemoryRouter initialEntries={['/register']}>
-        <AuthProvider>
-          <RegisterPage />
-        </AuthProvider>
-      </MemoryRouter>,
-    );
+    renderRegisterPage();
 
     await waitFor(() => expect(screen.getByRole('button', { name: '登録する' })).toBeEnabled());
     expect(screen.getByLabelText('パスワード（確認）')).toHaveAttribute('autoComplete', 'new-password');

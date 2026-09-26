@@ -28,6 +28,26 @@ public class User {
   @Column(nullable = false, length = 100)
   private String name;
 
+  /**
+   * 氏名の入力形式。既存(この機能導入前)のユーザーはすべてLEGACYであり、
+   * その場合はnameをそのまま表示に使う。新規登録ではJAPANESE/INTERNATIONALのみ設定される。
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "name_format", nullable = false, length = 20)
+  private NameFormat nameFormat;
+
+  // JAPANESE/INTERNATIONAL共通の姓(Last name)。LEGACYユーザーはnull。
+  @Column(name = "family_name", length = 30)
+  private String familyName;
+
+  // JAPANESE/INTERNATIONAL共通の名(First name)。LEGACYユーザーはnull。
+  @Column(name = "given_name", length = 30)
+  private String givenName;
+
+  // INTERNATIONALのみで使う任意のMiddle name。
+  @Column(name = "middle_name", length = 30)
+  private String middleName;
+
   @Column(nullable = false, length = 255)
   private String email;
 
@@ -56,12 +76,26 @@ public class User {
   protected User() {
   }
 
+  /**
+   * 既存呼び出し元(メール認証未対応時代からのテスト・その他のEntity生成箇所)との
+   * 互換性を保つため、構造化された氏名を指定しないコンストラクタを維持する。
+   * この場合はLEGACY扱いとなり、表示にはnameがそのまま使われる。
+   */
   public User(String name, String email, String passwordHash, Role role, boolean enabled) {
+    this(name, email, passwordHash, role, enabled, NameFormat.LEGACY, null, null, null);
+  }
+
+  public User(String name, String email, String passwordHash, Role role, boolean enabled,
+      NameFormat nameFormat, String familyName, String givenName, String middleName) {
     this.name = name;
     this.email = email;
     this.passwordHash = passwordHash;
     this.role = role;
     this.enabled = enabled;
+    this.nameFormat = nameFormat;
+    this.familyName = familyName;
+    this.givenName = givenName;
+    this.middleName = middleName;
   }
 
   public Long getId() {
@@ -74,6 +108,27 @@ public class User {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  /** 画面表示用の氏名。JAPANESE/INTERNATIONALは構造化項目から組み立て、LEGACYはnameをそのまま返す。 */
+  public String getDisplayName() {
+    return DisplayName.build(nameFormat, name, familyName, givenName, middleName);
+  }
+
+  public NameFormat getNameFormat() {
+    return nameFormat;
+  }
+
+  public String getFamilyName() {
+    return familyName;
+  }
+
+  public String getGivenName() {
+    return givenName;
+  }
+
+  public String getMiddleName() {
+    return middleName;
   }
 
   public String getEmail() {

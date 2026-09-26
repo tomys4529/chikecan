@@ -70,7 +70,7 @@ public class TicketService {
         principal.getId(), null);
     Ticket saved = ticketRepository.save(ticket);
     // requesterは常にログイン中の本人(principal)なので、名前解決のための追加クエリは不要。
-    return new TicketResponse(saved, principal.getName(), null);
+    return new TicketResponse(saved, principal.getDisplayName(), null);
   }
 
   /**
@@ -174,9 +174,9 @@ public class TicketService {
     // assigneeは検証のため既に取得済みなので、名前解決のために再度問い合わせない。
     // requesterNameのみ1件取得する(担当者変更はrequesterと無関係のため)。
     String requesterName = userRepository.findById(ticket.getRequesterId())
-        .map(User::getName)
+        .map(User::getDisplayName)
         .orElse(null);
-    String assigneeName = assignee != null ? assignee.getName() : null;
+    String assigneeName = assignee != null ? assignee.getDisplayName() : null;
     return new TicketResponse(ticket, requesterName, assigneeName);
   }
 
@@ -272,6 +272,6 @@ public class TicketService {
       return Map.of();
     }
     return userRepository.findAllById(userIds).stream()
-        .collect(Collectors.toMap(User::getId, User::getName));
+        .collect(Collectors.toMap(User::getId, User::getDisplayName));
   }
 }

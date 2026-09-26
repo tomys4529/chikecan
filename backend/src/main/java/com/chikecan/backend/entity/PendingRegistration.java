@@ -7,6 +7,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -32,6 +34,23 @@ public class PendingRegistration {
   // RegisterRequestのアプリ側上限(氏名30文字)に合わせる。
   @Column(nullable = false, length = 30)
   private String name;
+
+  /**
+   * 氏名の入力形式。メール認証完了時にUserへそのまま引き継がれる。
+   * この機能導入前のpending行はLEGACY(familyName等はnull)として扱う。
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "name_format", nullable = false, length = 20)
+  private NameFormat nameFormat;
+
+  @Column(name = "family_name", length = 30)
+  private String familyName;
+
+  @Column(name = "given_name", length = 30)
+  private String givenName;
+
+  @Column(name = "middle_name", length = 30)
+  private String middleName;
 
   // RegisterRequestのアプリ側上限(メールアドレス100文字)に合わせる。
   @Column(nullable = false, length = 100)
@@ -62,11 +81,20 @@ public class PendingRegistration {
   }
 
   public PendingRegistration(String name, String email, String passwordHash, String tokenHash, Instant expiresAt) {
+    this(name, email, passwordHash, tokenHash, expiresAt, NameFormat.LEGACY, null, null, null);
+  }
+
+  public PendingRegistration(String name, String email, String passwordHash, String tokenHash, Instant expiresAt,
+      NameFormat nameFormat, String familyName, String givenName, String middleName) {
     this.name = name;
     this.email = email;
     this.passwordHash = passwordHash;
     this.tokenHash = tokenHash;
     this.expiresAt = expiresAt;
+    this.nameFormat = nameFormat;
+    this.familyName = familyName;
+    this.givenName = givenName;
+    this.middleName = middleName;
   }
 
   public Long getId() {
@@ -79,6 +107,38 @@ public class PendingRegistration {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public NameFormat getNameFormat() {
+    return nameFormat;
+  }
+
+  public void setNameFormat(NameFormat nameFormat) {
+    this.nameFormat = nameFormat;
+  }
+
+  public String getFamilyName() {
+    return familyName;
+  }
+
+  public void setFamilyName(String familyName) {
+    this.familyName = familyName;
+  }
+
+  public String getGivenName() {
+    return givenName;
+  }
+
+  public void setGivenName(String givenName) {
+    this.givenName = givenName;
+  }
+
+  public String getMiddleName() {
+    return middleName;
+  }
+
+  public void setMiddleName(String middleName) {
+    this.middleName = middleName;
   }
 
   public String getEmail() {
