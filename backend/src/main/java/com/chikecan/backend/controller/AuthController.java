@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.chikecan.backend.dto.CsrfTokenResponse;
 import com.chikecan.backend.dto.LoginRequest;
+import com.chikecan.backend.dto.PasswordResetConfirmRequest;
+import com.chikecan.backend.dto.PasswordResetRequest;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.ResendVerificationRequest;
 import com.chikecan.backend.dto.UserResponse;
@@ -73,6 +75,18 @@ public class AuthController {
   public Map<String, String> resendVerification(@Valid @RequestBody ResendVerificationRequest request) {
     userService.resendVerification(request.getEmail());
     return Map.of("message", "対象のアカウントが確認できた場合、認証メールを送信します。");
+  }
+
+  @PostMapping("/password-reset/request")
+  public Map<String, String> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request) {
+    userService.requestPasswordReset(request.getEmail());
+    return Map.of("message", "対象のアカウントが確認できた場合、パスワード再設定メールを送信します。");
+  }
+
+  @PostMapping("/password-reset/confirm")
+  public Map<String, String> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
+    userService.confirmPasswordReset(request.getToken(), request.getPassword());
+    return Map.of("message", "パスワードを変更しました。");
   }
 
   @PostMapping("/login")

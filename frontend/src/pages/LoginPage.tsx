@@ -74,6 +74,9 @@ export function LoginPage() {
           </button>
         </form>
         <p>
+          <Link to="/forgot-password">パスワードを忘れた方</Link>
+        </p>
+        <p>
           アカウントをお持ちでない方は<Link to="/register">こちら</Link>
         </p>
       </div>

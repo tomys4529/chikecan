@@ -4,6 +4,8 @@ import type {
   LoginRequest,
   LogoutResponse,
   MessageResponse,
+  PasswordResetConfirmRequest,
+  PasswordResetRequest,
   RegisterRequest,
   ResendVerificationRequest,
   UserResponse,
@@ -40,6 +42,20 @@ export function verifyEmail(request: VerifyEmailRequest): Promise<MessageRespons
 
 export function resendVerification(request: ResendVerificationRequest): Promise<MessageResponse> {
   return apiFetch<MessageResponse>('/api/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function requestPasswordReset(request: PasswordResetRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/auth/password-reset/request', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export function confirmPasswordReset(request: PasswordResetConfirmRequest): Promise<MessageResponse> {
+  return apiFetch<MessageResponse>('/api/auth/password-reset/confirm', {
     method: 'POST',
     body: JSON.stringify(request),
   });

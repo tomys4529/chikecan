@@ -22,11 +22,14 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
+import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.DuplicateEmailException;
+import com.chikecan.backend.exception.InvalidPasswordResetTokenException;
 import com.chikecan.backend.exception.InvalidVerificationTokenException;
+import com.chikecan.backend.repository.PasswordResetTokenRepository;
 import com.chikecan.backend.repository.PendingRegistrationRepository;
 import com.chikecan.backend.repository.UserRepository;
 import com.chikecan.backend.security.VerificationTokenGenerator;
@@ -41,15 +44,22 @@ class UserServiceTest {
   private PendingRegistrationRepository pendingRegistrationRepository;
 
   @Mock
+  private PasswordResetTokenRepository passwordResetTokenRepository;
+
+  @Mock
   private PasswordEncoder passwordEncoder;
 
   @Mock
   private VerificationMailService verificationMailService;
 
+  @Mock
+  private PasswordResetMailService passwordResetMailService;
+
   private UserService userService;
 
   private UserService newService() {
-    return new UserService(userRepository, pendingRegistrationRepository, passwordEncoder, verificationMailService);
+    return new UserService(userRepository, pendingRegistrationRepository, passwordResetTokenRepository,
+        passwordEncoder, verificationMailService, passwordResetMailService);
   }
 
   private RegisterRequest requestOf(String name, String email, String password) {
@@ -64,6 +74,18 @@ class UserServiceTest {
     PendingRegistration pending = new PendingRegistration("既存の名前", email, "old-hash", tokenHash, expiresAt);
     ReflectionTestUtils.setField(pending, "id", id);
     return pending;
+  }
+
+  private User userOf(Long id, String name, String email, String passwordHash) {
+    User user = new User(name, email, passwordHash, Role.USER, true);
+    ReflectionTestUtils.setField(user, "id", id);
+    return user;
+  }
+
+  private PasswordResetToken passwordResetTokenOf(Long id, Long userId, String tokenHash, Instant expiresAt) {
+    PasswordResetToken token = new PasswordResetToken(userId, tokenHash, expiresAt);
+    ReflectionTestUtils.setField(token, "id", id);
+    return token;
   }
 
   // ===== 登録(pending_registrationsへの一時保存) =====
@@ -338,6 +360,168 @@ class UserServiceTest {
 
     verify(pendingRegistrationRepository, never()).save(any());
     verify(verificationMailService, never()).sendVerificationEmail(anyString(), anyString());
+  }
+
+  // ===== パスワードリセット要求 =====
+
+  @Test
+  void 登録済みメールアドレスへのリセット要求でtokenが作成される() {
+    userService = newService();
+    User user = userOf(1L, "山田太郎", "reset-target@example.com", "existing-hash");
+
+    when(userRepository.findByEmail("reset-target@example.com")).thenReturn(Optional.of(user));
+    when(passwordResetTokenRepository.findByUserId(1L)).thenReturn(Optional.empty());
+    when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.requestPasswordReset("Reset-Target@EXAMPLE.com");
+
+    ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+    verify(passwordResetTokenRepository).save(captor.capture());
+    PasswordResetToken saved = captor.getValue();
+
+    assertThat(saved.getUserId()).isEqualTo(1L);
+    // 生tokenがそのまま保存されていないこと(SHA-256の16進64文字であること)。
+    assertThat(saved.getTokenHash()).hasSize(64).matches("^[0-9a-f]{64}$");
+    verify(passwordResetMailService).sendPasswordResetEmail(
+        org.mockito.ArgumentMatchers.eq("reset-target@example.com"), anyString());
+  }
+
+  @Test
+  void リセット要求時にexpires_atが現在時刻から1時間後になる() {
+    userService = newService();
+    User user = userOf(2L, "田中花子", "expiry-check@example.com", "hash");
+
+    when(userRepository.findByEmail("expiry-check@example.com")).thenReturn(Optional.of(user));
+    when(passwordResetTokenRepository.findByUserId(2L)).thenReturn(Optional.empty());
+    when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    Instant before = Instant.now();
+    userService.requestPasswordReset("expiry-check@example.com");
+    Instant after = Instant.now();
+
+    ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+    verify(passwordResetTokenRepository).save(captor.capture());
+    Instant expiresAt = captor.getValue().getExpiresAt();
+
+    assertThat(expiresAt).isAfterOrEqualTo(before.plusSeconds(3600 - 5));
+    assertThat(expiresAt).isBeforeOrEqualTo(after.plusSeconds(3600 + 5));
+  }
+
+  @Test
+  void 未登録メールアドレスへのリセット要求は例外を投げず何もしない() {
+    userService = newService();
+    when(userRepository.findByEmail("unknown-for-reset@example.com")).thenReturn(Optional.empty());
+
+    userService.requestPasswordReset("unknown-for-reset@example.com");
+
+    verify(passwordResetTokenRepository, never()).save(any());
+    verify(passwordResetMailService, never()).sendPasswordResetEmail(anyString(), anyString());
+  }
+
+  @Test
+  void 同一ユーザーが再度リセット要求すると既存tokenが新しいtokenへ上書きされる() {
+    userService = newService();
+    User user = userOf(3L, "佐藤次郎", "reissue@example.com", "hash");
+    PasswordResetToken existing = passwordResetTokenOf(30L, 3L, "old-token-hash", Instant.now().plusSeconds(1800));
+
+    when(userRepository.findByEmail("reissue@example.com")).thenReturn(Optional.of(user));
+    when(passwordResetTokenRepository.findByUserId(3L)).thenReturn(Optional.of(existing));
+    when(passwordResetTokenRepository.save(any(PasswordResetToken.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    userService.requestPasswordReset("reissue@example.com");
+
+    ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+    verify(passwordResetTokenRepository).save(captor.capture());
+    PasswordResetToken saved = captor.getValue();
+
+    // 同一レコード(id=30)が更新されており、新しいレコードとして追加されていない。
+    assertThat(saved.getId()).isEqualTo(30L);
+    assertThat(saved.getTokenHash()).isNotEqualTo("old-token-hash");
+    assertThat(saved.getExpiresAt()).isAfter(Instant.now().plusSeconds(3500));
+  }
+
+  @Test
+  void リセット要求のたびに期限切れtokenのクリーンアップが呼ばれる() {
+    userService = newService();
+    when(userRepository.findByEmail("cleanup-check@example.com")).thenReturn(Optional.empty());
+
+    userService.requestPasswordReset("cleanup-check@example.com");
+
+    verify(passwordResetTokenRepository).deleteByExpiresAtBefore(any(Instant.class));
+  }
+
+  // ===== パスワードリセット確認(パスワード更新) =====
+
+  @Test
+  void 正常なtokenでパスワードを更新するとusersのpassword_hashが更新されtokenが削除される() {
+    userService = newService();
+    String rawToken = "reset-raw-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    User user = userOf(4L, "確認太郎", "confirm-ok@example.com", "old-hash");
+    PasswordResetToken token = passwordResetTokenOf(40L, 4L, tokenHash, Instant.now().plusSeconds(1800));
+
+    when(passwordResetTokenRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(token));
+    when(userRepository.findById(4L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.encode("NewPassw0rd1!")).thenReturn("new-hashed-value");
+
+    userService.confirmPasswordReset(rawToken, "NewPassw0rd1!");
+
+    assertThat(user.getPasswordHash()).isEqualTo("new-hashed-value");
+    verify(userRepository).save(user);
+    verify(passwordResetTokenRepository).delete(token);
+  }
+
+  @Test
+  void 存在しないtokenでの更新は失敗する() {
+    userService = newService();
+    String tokenHash = VerificationTokenGenerator.hash("unknown-reset-token");
+    when(passwordResetTokenRepository.findByTokenHash(tokenHash)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> userService.confirmPasswordReset("unknown-reset-token", "NewPassw0rd1!"))
+        .isInstanceOf(InvalidPasswordResetTokenException.class);
+
+    verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void 期限切れtokenでの更新は失敗しpassword_hashが変更されない() {
+    userService = newService();
+    String rawToken = "expired-reset-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    PasswordResetToken token = passwordResetTokenOf(41L, 5L, tokenHash, Instant.now().minusSeconds(1));
+
+    when(passwordResetTokenRepository.findByTokenHash(tokenHash)).thenReturn(Optional.of(token));
+
+    assertThatThrownBy(() -> userService.confirmPasswordReset(rawToken, "NewPassw0rd1!"))
+        .isInstanceOf(InvalidPasswordResetTokenException.class);
+
+    verify(userRepository, never()).save(any());
+    verify(passwordResetTokenRepository, never()).delete(any());
+  }
+
+  @Test
+  void 更新成功後に同じtokenを再使用すると失敗する() {
+    userService = newService();
+    String rawToken = "one-time-reset-token";
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    User user = userOf(6L, "再利用花子", "reset-reuse@example.com", "old-hash");
+    PasswordResetToken token = passwordResetTokenOf(42L, 6L, tokenHash, Instant.now().plusSeconds(1800));
+
+    when(passwordResetTokenRepository.findByTokenHash(tokenHash))
+        .thenReturn(Optional.of(token))
+        .thenReturn(Optional.empty());
+    when(userRepository.findById(6L)).thenReturn(Optional.of(user));
+    when(passwordEncoder.encode(anyString())).thenReturn("new-hashed-value");
+
+    userService.confirmPasswordReset(rawToken, "NewPassw0rd1!");
+    verify(passwordResetTokenRepository).delete(token);
+
+    // 1回目の更新でtokenは削除済みのため、2回目は見つからず失敗する。
+    assertThatThrownBy(() -> userService.confirmPasswordReset(rawToken, "AnotherPassw0rd1!"))
+        .isInstanceOf(InvalidPasswordResetTokenException.class);
   }
 
   // ===== 既存機能(担当AGENT一覧) =====

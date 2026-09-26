@@ -41,6 +41,15 @@ export interface ResendVerificationRequest {
   email: string;
 }
 
+export interface PasswordResetRequest {
+  email: string;
+}
+
+export interface PasswordResetConfirmRequest {
+  token: string;
+  password: string;
+}
+
 /** message文字列のみを返す軽量なAPIレスポンス(register/verify-email/resend-verification共通)。 */
 export interface MessageResponse {
   message: string;

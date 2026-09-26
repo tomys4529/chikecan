@@ -14,11 +14,14 @@ import org.springframework.transaction.annotation.Transactional;
 import com.chikecan.backend.dto.AgentSummaryResponse;
 import com.chikecan.backend.dto.RegisterRequest;
 import com.chikecan.backend.dto.UserResponse;
+import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
 import com.chikecan.backend.exception.DuplicateEmailException;
+import com.chikecan.backend.exception.InvalidPasswordResetTokenException;
 import com.chikecan.backend.exception.InvalidVerificationTokenException;
+import com.chikecan.backend.repository.PasswordResetTokenRepository;
 import com.chikecan.backend.repository.PendingRegistrationRepository;
 import com.chikecan.backend.repository.UserRepository;
 import com.chikecan.backend.security.VerificationTokenGenerator;
@@ -30,19 +33,29 @@ public class UserService {
   private static final Duration TOKEN_VALIDITY = Duration.ofHours(24);
   private static final String INVALID_TOKEN_MESSAGE = "認証リンクが無効または期限切れです";
 
+  // パスワードリセットはメール認証より機密性が高いため、有効期限を短くする。
+  private static final Duration PASSWORD_RESET_TOKEN_VALIDITY = Duration.ofHours(1);
+  private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE = "再設定リンクが無効または期限切れです";
+
   private final UserRepository userRepository;
   private final PendingRegistrationRepository pendingRegistrationRepository;
+  private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final PasswordEncoder passwordEncoder;
   private final VerificationMailService verificationMailService;
+  private final PasswordResetMailService passwordResetMailService;
 
   public UserService(UserRepository userRepository,
       PendingRegistrationRepository pendingRegistrationRepository,
+      PasswordResetTokenRepository passwordResetTokenRepository,
       PasswordEncoder passwordEncoder,
-      VerificationMailService verificationMailService) {
+      VerificationMailService verificationMailService,
+      PasswordResetMailService passwordResetMailService) {
     this.userRepository = userRepository;
     this.pendingRegistrationRepository = pendingRegistrationRepository;
+    this.passwordResetTokenRepository = passwordResetTokenRepository;
     this.passwordEncoder = passwordEncoder;
     this.verificationMailService = verificationMailService;
+    this.passwordResetMailService = passwordResetMailService;
   }
 
   /**
@@ -137,6 +150,60 @@ public class UserService {
 
   private void cleanupExpiredPending() {
     pendingRegistrationRepository.deleteByExpiresAtBefore(Instant.now());
+  }
+
+  /**
+   * パスワードリセットメールの送信要求。アカウント列挙を防ぐため、メールアドレスの
+   * 登録状況に関わらず呼び出し側には常に同じ結果(例外を投げない)を返す。
+   * usersに存在する場合のみtokenを発行・保存しメールを送信する。
+   * 同一ユーザーに複数の有効tokenを残さないよう、既存tokenがあれば上書きする
+   * (古いtokenは上書きにより即座に無効化される)。
+   */
+  @Transactional
+  public void requestPasswordReset(String email) {
+    // Spring Scheduler等の定期実行は設けず、新規のリセット要求のたびに期限切れtokenを
+    // 削除する遅延クリーンアップ方式にする。
+    passwordResetTokenRepository.deleteByExpiresAtBefore(Instant.now());
+
+    String normalizedEmail = normalize(email);
+    userRepository.findByEmail(normalizedEmail).ifPresent(user -> {
+      String rawToken = VerificationTokenGenerator.generateRawToken();
+      String tokenHash = VerificationTokenGenerator.hash(rawToken);
+      Instant expiresAt = Instant.now().plus(PASSWORD_RESET_TOKEN_VALIDITY);
+
+      PasswordResetToken resetToken = passwordResetTokenRepository.findByUserId(user.getId())
+          .orElseGet(() -> new PasswordResetToken(user.getId(), tokenHash, expiresAt));
+      resetToken.setTokenHash(tokenHash);
+      resetToken.setExpiresAt(expiresAt);
+      passwordResetTokenRepository.save(resetToken);
+
+      passwordResetMailService.sendPasswordResetEmail(normalizedEmail, rawToken);
+    });
+    // usersに存在しない場合も例外を投げずに正常終了する(呼び出し元には常に同じ結果を返す)。
+  }
+
+  /**
+   * メール内リンクのtokenを検証し、成功した場合のみ新しいパスワードへ更新する。
+   * token検索・パスワード更新・token削除を同一トランザクションで行い、
+   * 使用済み・期限切れのtokenでは絶対に更新できないようにする。
+   */
+  @Transactional
+  public void confirmPasswordReset(String rawToken, String newPassword) {
+    String tokenHash = VerificationTokenGenerator.hash(rawToken);
+    PasswordResetToken resetToken = passwordResetTokenRepository.findByTokenHash(tokenHash)
+        .orElseThrow(() -> new InvalidPasswordResetTokenException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+
+    if (resetToken.isExpired(Instant.now())) {
+      throw new InvalidPasswordResetTokenException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE);
+    }
+
+    User user = userRepository.findById(resetToken.getUserId())
+        .orElseThrow(() -> new InvalidPasswordResetTokenException(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+
+    user.setPasswordHash(passwordEncoder.encode(newPassword));
+    userRepository.save(user);
+    // 削除によりtokenは再利用できなくなる。
+    passwordResetTokenRepository.delete(resetToken);
   }
 
   /**

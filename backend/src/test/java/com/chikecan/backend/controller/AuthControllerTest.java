@@ -18,9 +18,11 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import com.chikecan.backend.entity.PasswordResetToken;
 import com.chikecan.backend.entity.PendingRegistration;
 import com.chikecan.backend.entity.Role;
 import com.chikecan.backend.entity.User;
+import com.chikecan.backend.repository.PasswordResetTokenRepository;
 import com.chikecan.backend.repository.PendingRegistrationRepository;
 import com.chikecan.backend.repository.UserRepository;
 import com.chikecan.backend.security.VerificationTokenGenerator;
@@ -34,6 +36,8 @@ class AuthControllerTest {
 
   private static final String INVALID_TOKEN_MESSAGE = "認証リンクが無効または期限切れです";
   private static final String RESEND_MESSAGE = "対象のアカウントが確認できた場合、認証メールを送信します。";
+  private static final String INVALID_PASSWORD_RESET_TOKEN_MESSAGE = "再設定リンクが無効または期限切れです";
+  private static final String PASSWORD_RESET_REQUEST_MESSAGE = "対象のアカウントが確認できた場合、パスワード再設定メールを送信します。";
 
   @Autowired
   private MockMvc mockMvc;
@@ -43,6 +47,9 @@ class AuthControllerTest {
 
   @Autowired
   private PendingRegistrationRepository pendingRegistrationRepository;
+
+  @Autowired
+  private PasswordResetTokenRepository passwordResetTokenRepository;
 
   @Autowired
   private PasswordEncoder passwordEncoder;
@@ -59,6 +66,11 @@ class AuthControllerTest {
 
   private User seedRegisteredUser(String name, String email, String rawPassword) {
     return userRepository.saveAndFlush(new User(name, email, passwordEncoder.encode(rawPassword), Role.USER, true));
+  }
+
+  private PasswordResetToken seedPasswordResetToken(Long userId, String rawToken, Instant expiresAt) {
+    PasswordResetToken token = new PasswordResetToken(userId, VerificationTokenGenerator.hash(rawToken), expiresAt);
+    return passwordResetTokenRepository.saveAndFlush(token);
   }
 
   private CsrfCredentials obtainCsrfToken() throws Exception {
@@ -529,5 +541,248 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.email").value("login-after-verify@example.com"))
         .andExpect(jsonPath("$.enabled").value(true));
+  }
+
+  // ===== パスワードリセット要求(password-reset/request) =====
+
+  @Test
+  void 登録済みメールアドレスへのリセット要求は200になりtokenが保存される() throws Exception {
+    seedRegisteredUser("リセット太郎", "reset-request@example.com", "OldPassw0rd1!");
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/request")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"Reset-Request@Example.com\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").value(PASSWORD_RESET_REQUEST_MESSAGE));
+
+    var user = userRepository.findByEmail("reset-request@example.com").orElseThrow();
+    var token = passwordResetTokenRepository.findByUserId(user.getId()).orElseThrow();
+    // 生tokenがそのまま保存されていないこと(SHA-256の16進64文字であること)。
+    assertThat(token.getTokenHash()).hasSize(64).matches("^[0-9a-f]{64}$");
+    assertThat(token.getExpiresAt()).isAfter(Instant.now().plusSeconds(3500));
+    assertThat(token.getExpiresAt()).isBefore(Instant.now().plusSeconds(3700));
+  }
+
+  @Test
+  void 未登録メールアドレスへのリセット要求も同じ一般化されたレスポンスになる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/request")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"unknown-for-reset@example.com\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").value(PASSWORD_RESET_REQUEST_MESSAGE));
+  }
+
+  @Test
+  void 同一ユーザーが再度リセット要求すると古いtokenが無効化され新しいtokenが発行される() throws Exception {
+    var user = seedRegisteredUser("再要求花子", "reissue-request@example.com", "OldPassw0rd1!");
+    var firstToken = seedPasswordResetToken(user.getId(), "first-reset-token", Instant.now().plusSeconds(1800));
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/request")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"reissue-request@example.com\"}"))
+        .andExpect(status().isOk());
+
+    // 同一ユーザーに対してtokenは1件だけであること。
+    long tokenCountForUser = passwordResetTokenRepository.findAll().stream()
+        .filter(t -> t.getUserId().equals(user.getId()))
+        .count();
+    assertThat(tokenCountForUser).isEqualTo(1);
+
+    var updatedToken = passwordResetTokenRepository.findByUserId(user.getId()).orElseThrow();
+    assertThat(updatedToken.getId()).isEqualTo(firstToken.getId());
+    assertThat(updatedToken.getTokenHash()).isNotEqualTo(firstToken.getTokenHash());
+
+    // 古いtokenは既に無効(confirmすると失敗する)。
+    CsrfCredentials confirmCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(confirmCsrf.cookie())
+            .header("X-XSRF-TOKEN", confirmCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"first-reset-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+  }
+
+  @Test
+  void CSRFトークンなしでpassword_reset_requestを呼ぶと403になる() throws Exception {
+    mockMvc.perform(post("/api/auth/password-reset/request")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"someone@example.com\"}"))
+        .andExpect(status().isForbidden());
+  }
+
+  // ===== パスワードリセット確認(password-reset/confirm) =====
+
+  @Test
+  void 正常なtokenでパスワードを変更するとusersのpassword_hashが更新されtokenが削除される() throws Exception {
+    var user = seedRegisteredUser("確認花子", "confirm-success@example.com", "OldPassw0rd1!");
+    seedPasswordResetToken(user.getId(), "confirm-success-token", Instant.now().plusSeconds(1800));
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"confirm-success-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.message").exists());
+
+    var updatedUser = userRepository.findByEmail("confirm-success@example.com").orElseThrow();
+    assertThat(passwordEncoder.matches("NewPassw0rd1!", updatedUser.getPasswordHash())).isTrue();
+    assertThat(passwordEncoder.matches("OldPassw0rd1!", updatedUser.getPasswordHash())).isFalse();
+    assertThat(passwordResetTokenRepository.findByUserId(user.getId())).isEmpty();
+  }
+
+  @Test
+  void 存在しないtokenで確認すると400になる() throws Exception {
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"no-such-reset-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+  }
+
+  @Test
+  void 期限切れtokenで確認すると400になりパスワードが更新されない() throws Exception {
+    var user = seedRegisteredUser("期限切れ花子", "expired-reset@example.com", "OldPassw0rd1!");
+    seedPasswordResetToken(user.getId(), "expired-reset-token", Instant.now().minusSeconds(1));
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"expired-reset-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+
+    var unchangedUser = userRepository.findByEmail("expired-reset@example.com").orElseThrow();
+    assertThat(passwordEncoder.matches("OldPassw0rd1!", unchangedUser.getPasswordHash())).isTrue();
+  }
+
+  @Test
+  void 確認成功後に同じtokenを再使用すると400になる() throws Exception {
+    var user = seedRegisteredUser("再利用太郎", "reset-reuse@example.com", "OldPassw0rd1!");
+    seedPasswordResetToken(user.getId(), "reset-reuse-token", Instant.now().plusSeconds(1800));
+
+    CsrfCredentials firstCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(firstCsrf.cookie())
+            .header("X-XSRF-TOKEN", firstCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"reset-reuse-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isOk());
+
+    CsrfCredentials secondCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(secondCsrf.cookie())
+            .header("X-XSRF-TOKEN", secondCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"reset-reuse-token\",\"password\":\"AnotherPassw0rd1!\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(INVALID_PASSWORD_RESET_TOKEN_MESSAGE));
+  }
+
+  @Test
+  void 弱いパスワードで確認すると400になりパスワードが更新されない() throws Exception {
+    var user = seedRegisteredUser("弱い太郎", "weak-reset@example.com", "OldPassw0rd1!");
+    seedPasswordResetToken(user.getId(), "weak-reset-token", Instant.now().plusSeconds(1800));
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"weak-reset-token\",\"password\":\"weakpass\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(
+            "パスワードは8〜72文字で、大文字・小文字・数字・記号をそれぞれ1文字以上含めてください"));
+
+    var unchangedUser = userRepository.findByEmail("weak-reset@example.com").orElseThrow();
+    assertThat(passwordEncoder.matches("OldPassw0rd1!", unchangedUser.getPasswordHash())).isTrue();
+    // バリデーションで弾かれ、tokenはまだ使用されていない。
+    assertThat(passwordResetTokenRepository.findByUserId(user.getId())).isPresent();
+  }
+
+  @Test
+  void パスワードが72文字を超える場合は400になる() throws Exception {
+    var user = seedRegisteredUser("超過太郎", "too-long-reset@example.com", "OldPassw0rd1!");
+    seedPasswordResetToken(user.getId(), "too-long-reset-token", Instant.now().plusSeconds(1800));
+    String tooLong = "Aa1!" + "a".repeat(69);
+
+    CsrfCredentials csrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(csrf.cookie())
+            .header("X-XSRF-TOKEN", csrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(String.format("{\"token\":\"too-long-reset-token\",\"password\":\"%s\"}", tooLong)))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void CSRFトークンなしでpassword_reset_confirmを呼ぶと403になる() throws Exception {
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"any-token\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isForbidden());
+  }
+
+  // ===== パスワード変更後のログイン可否 =====
+
+  @Test
+  void パスワード変更後は旧パスワードでログインできず新パスワードでログインできる() throws Exception {
+    seedRegisteredUser("ログイン確認太郎", "login-after-reset@example.com", "OldPassw0rd1!");
+
+    CsrfCredentials requestCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/request")
+            .cookie(requestCsrf.cookie())
+            .header("X-XSRF-TOKEN", requestCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"login-after-reset@example.com\"}"))
+        .andExpect(status().isOk());
+
+    var user = userRepository.findByEmail("login-after-reset@example.com").orElseThrow();
+    // 実際に発行された生tokenはメール送信(ローカルはログ出力)経由でしか得られないため、
+    // テストでは同じ仕組み(token_hash上書き)を使い、既知の生tokenへ差し替えて検証する。
+    var resetToken = passwordResetTokenRepository.findByUserId(user.getId()).orElseThrow();
+    resetToken.setTokenHash(VerificationTokenGenerator.hash("known-reset-token-for-login-test"));
+    passwordResetTokenRepository.saveAndFlush(resetToken);
+
+    CsrfCredentials confirmCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/password-reset/confirm")
+            .cookie(confirmCsrf.cookie())
+            .header("X-XSRF-TOKEN", confirmCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"token\":\"known-reset-token-for-login-test\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isOk());
+
+    CsrfCredentials oldLoginCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/login")
+            .cookie(oldLoginCsrf.cookie())
+            .header("X-XSRF-TOKEN", oldLoginCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"login-after-reset@example.com\",\"password\":\"OldPassw0rd1!\"}"))
+        .andExpect(status().isUnauthorized());
+
+    CsrfCredentials newLoginCsrf = obtainCsrfToken();
+    mockMvc.perform(post("/api/auth/login")
+            .cookie(newLoginCsrf.cookie())
+            .header("X-XSRF-TOKEN", newLoginCsrf.token())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"email\":\"login-after-reset@example.com\",\"password\":\"NewPassw0rd1!\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.email").value("login-after-reset@example.com"));
   }
 }

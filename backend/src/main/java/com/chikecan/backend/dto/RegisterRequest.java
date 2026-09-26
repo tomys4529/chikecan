@@ -17,9 +17,7 @@ public class RegisterRequest {
   private String email;
 
   @NotBlank(message = "パスワードは必須です")
-  @Pattern(
-      regexp = "^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[^A-Za-z0-9])[\\x21-\\x7E]{8,72}$",
-      message = "パスワードは8〜72文字で、大文字・小文字・数字・記号をそれぞれ1文字以上含めてください")
+  @Pattern(regexp = PasswordPolicy.PATTERN, message = PasswordPolicy.MESSAGE)
   private String password;
 
   public String getName() {
