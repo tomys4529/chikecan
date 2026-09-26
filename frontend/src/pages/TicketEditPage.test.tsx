@@ -121,8 +121,80 @@ describe('TicketEditPage', () => {
     await user.clear(screen.getByLabelText('タイトル'));
     await user.click(screen.getByRole('button', { name: '更新する' }));
 
+    expect(await screen.findByRole('alert')).toHaveTextContent('タイトルを入力してください');
+    expect(patchCalled).toBe(false);
+  });
+
+  it('内容を空にするとバリデーションエラーを表示しPATCHを呼ばない', async () => {
+    let patchCalled = false;
+    renderEditPage('/tickets/7/edit', (input, init) => {
+      const url = String(input);
+      const method = (init && (init as RequestInit).method) ?? 'GET';
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+      if (url.endsWith('/api/tickets/7') && method === 'PATCH') {
+        patchCalled = true;
+        return Promise.resolve(jsonResponse(ticketResponse()));
+      }
+      if (url.endsWith('/api/tickets/7') && method === 'GET') {
+        return Promise.resolve(jsonResponse(ticketResponse()));
+      }
+      throw new Error(`unexpected fetch: ${url} ${method}`);
+    });
+
+    const user = userEvent.setup();
+    await screen.findByLabelText('内容');
+    await user.clear(screen.getByLabelText('内容'));
+    await user.click(screen.getByRole('button', { name: '更新する' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('内容を入力してください');
+    expect(patchCalled).toBe(false);
+  });
+
+  it('タイトル・内容が空白のみだとPATCHを呼ばない', async () => {
+    let patchCalled = false;
+    renderEditPage('/tickets/7/edit', (input, init) => {
+      const url = String(input);
+      const method = (init && (init as RequestInit).method) ?? 'GET';
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+      if (url.endsWith('/api/tickets/7') && method === 'PATCH') {
+        patchCalled = true;
+        return Promise.resolve(jsonResponse(ticketResponse()));
+      }
+      if (url.endsWith('/api/tickets/7') && method === 'GET') {
+        return Promise.resolve(jsonResponse(ticketResponse()));
+      }
+      throw new Error(`unexpected fetch: ${url} ${method}`);
+    });
+
+    const user = userEvent.setup();
+    await screen.findByLabelText('タイトル');
+    await user.clear(screen.getByLabelText('タイトル'));
+    await user.type(screen.getByLabelText('タイトル'), '   ');
+    await user.clear(screen.getByLabelText('内容'));
+    await user.type(screen.getByLabelText('内容'), '   ');
+    await user.click(screen.getByRole('button', { name: '更新する' }));
+
     expect(await screen.findByRole('alert')).toHaveTextContent('タイトルと内容を入力してください');
     expect(patchCalled).toBe(false);
+  });
+
+  it('タイトルと内容にそれぞれ文字数制限が設定され現在の文字数が表示される', async () => {
+    renderEditPage('/tickets/7/edit', (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/auth/csrf')) return Promise.resolve(csrfResponse());
+      if (url.endsWith('/api/auth/me')) return Promise.resolve(jsonResponse(testUser({ role: 'USER' })));
+      if (url.endsWith('/api/tickets/7')) return Promise.resolve(jsonResponse(ticketResponse()));
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await screen.findByLabelText('タイトル');
+    expect(screen.getByLabelText('タイトル')).toHaveAttribute('maxLength', '50');
+    expect(screen.getByLabelText('内容')).toHaveAttribute('maxLength', '500');
+    // 初期値「編集前タイトル」(7文字)・「編集前内容」(5文字)が反映されていること。
+    expect(screen.getByText('7 / 50')).toBeInTheDocument();
+    expect(screen.getByText('5 / 500')).toBeInTheDocument();
   });
 
   it.each([400, 403, 404, 409])('サーバーの%dエラーメッセージを表示する', async (status) => {

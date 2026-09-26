@@ -14,11 +14,11 @@ import jakarta.validation.constraints.Size;
 public class TicketUpdateRequest {
 
   @NotBlank(message = "タイトルは必須です")
-  @Size(max = 200, message = "タイトルは200文字以内で入力してください")
+  @Size(max = 50, message = "タイトルは50文字以内で入力してください")
   private String title;
 
   @NotBlank(message = "内容は必須です")
-  @Size(max = 5000, message = "内容は5000文字以内で入力してください")
+  @Size(max = 500, message = "内容は500文字以内で入力してください")
   private String description;
 
   @NotNull(message = "優先度は必須です")

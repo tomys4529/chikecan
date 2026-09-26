@@ -6,6 +6,11 @@ import { createTicket } from '../api/tickets';
 import { ApiError, isUnauthorized } from '../api/client';
 import type { TicketPriority } from '../types/ticket';
 import { ErrorMessage } from '../components/ErrorMessage';
+import {
+  TICKET_DESCRIPTION_MAX_LENGTH,
+  TICKET_TITLE_MAX_LENGTH,
+  validateTicketFields,
+} from '../utils/ticketValidation';
 
 export function TicketCreatePage() {
   const { invalidateSession } = useAuth();
@@ -28,8 +33,9 @@ export function TicketCreatePage() {
 
     setErrorMessage(null);
 
-    if (!title.trim() || !description.trim()) {
-      setErrorMessage('タイトルと内容を入力してください');
+    const validationMessage = validateTicketFields(title, description);
+    if (validationMessage) {
+      setErrorMessage(validationMessage);
       return;
     }
 
@@ -62,7 +68,11 @@ export function TicketCreatePage() {
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={submitting}
+              maxLength={TICKET_TITLE_MAX_LENGTH}
             />
+            <span className="form-field__counter">
+              {title.length} / {TICKET_TITLE_MAX_LENGTH}
+            </span>
           </div>
           <div className="form-field">
             <label htmlFor="ticket-description">内容</label>
@@ -72,7 +82,11 @@ export function TicketCreatePage() {
               onChange={(event) => setDescription(event.target.value)}
               disabled={submitting}
               rows={6}
+              maxLength={TICKET_DESCRIPTION_MAX_LENGTH}
             />
+            <span className="form-field__counter">
+              {description.length} / {TICKET_DESCRIPTION_MAX_LENGTH}
+            </span>
           </div>
           <div className="form-field">
             <label htmlFor="ticket-priority">優先度</label>
