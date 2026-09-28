@@ -75,6 +75,7 @@ flowchart TD
 ## 主な機能
 
 - メールアドレス確認を伴うユーザー登録・ログイン・ログアウト・ログイン状態の確認
+- Googleアカウントによるログイン（OAuth2 / OpenID Connect、既存のメール＋パスワードログインと併用可能）
 - パスワードを忘れた場合の再設定（メールリンク経由）
 - ログイン中のパスワード変更・メールアドレス変更（変更後は既存セッションを全端末で失効）
 - 姓名を構造化して入力する氏名フォーム（日本向け／海外向け）
@@ -170,6 +171,38 @@ flowchart TD
 - 表示名の組み立ては`DisplayName.build(...)`に一本化し、`User`エンティティと`AppUserDetails`（セッション上のログイン情報）の両方から同じロジックを呼び出すことで表示のずれを防いでいる
 - `LEGACY`はこの機能導入前から存在する、姓名を分割保存していないデータを表す区分で、新規登録では選択できない。既存の`name`列は削除せず、LEGACY判定時の表示にそのまま使う
 
+### Googleログイン（OAuth2 / OpenID Connect）
+
+既存のメールアドレス＋パスワードログインを残したまま、Googleアカウントでのログインを追加しています。Spring Security OAuth2 Client（`spring-boot-starter-oauth2-client`）を使い、Googleログイン後もJWTは導入せず、既存のセッションCookie認証をそのまま利用します。
+
+```mermaid
+flowchart TD
+    L1["Googleでログイン<br/>ボタン"]
+    G1["Google認証画面"]
+    CB["/login/oauth2/code/google<br/>コールバック"]
+    R1{"oauth_accountsに<br/>該当subがあるか"}
+    U1[("既存Userを取得")]
+    V1{"email_verified済みかつ<br/>email未使用か"}
+    U2[("新規User作成<br/>role=USER固定")]
+    S1["JSESSIONID発行"]
+    E1["ログイン拒否<br/>oauthError=trueへ"]
+
+    L1 --> G1 --> CB --> R1
+    R1 -- はい --> U1 --> S1
+    R1 -- いいえ --> V1
+    V1 -- はい --> U2 --> S1
+    V1 -- いいえ --> E1
+```
+
+- 本人特定にはメールアドレスではなく、Googleの`sub`（OpenID Connectの不変な外部アカウントID）を使う。`oauth_accounts`テーブルで`sub`と`users.id`を紐付け、将来LINE等の別プロバイダを追加できる構造にしている（[DB設計](#db設計)を参照）
+- 初回ログイン時は`email_verified=true`であることを必須とし、falseまたは未取得の場合はログインを拒否する
+- **同じメールアドレスの既存アカウントが存在しても自動連携はしない。** 安全側に倒し、その場合はログインを拒否する（本人確認済みの連携フローは[今後の改善案](#今後の改善案)とする）
+- 新規作成されるユーザーのロールは常に`USER`固定で、Googleが返すclaimからロールを信用しない
+- 氏名はGoogleの`given_name`/`family_name`が両方取得できれば構造化氏名の`INTERNATIONAL`形式、どちらか一方でも欠ける場合はプレースホルダー文字列を生成せず、Googleの`name`claim（フルネーム）をそのまま`LEGACY`形式として使う（[氏名の構造化入力](#氏名の構造化入力)の仕組みをそのまま流用）
+- Google経由で作成したユーザーは、SecureRandomで生成したランダム値をBCryptハッシュ化した値をpassword_hashへ保存する。生の値はどこにも保存・ログ出力せず、既存のusersテーブルのスキーマ（password_hashのNOT NULL制約）は変更していない。このユーザーは通常のメール＋パスワードログインでは事実上ログインできない
+- ログイン成功時は既存の`SessionAuthenticationStrategy`（セッション固定攻撃対策＋`SessionRegistry`登録＋CSRFトークン再発行）をそのまま適用しており、Googleログインのセッションも通常ログインと同じ経路で[パスワード変更・リセット後の全セッション失効](#パスワード変更リセット後の全セッション失効)の対象になる
+- 認証失敗時はスタックトレースやGoogleのtoken・認可コードを返さず、`/login?oauthError=true`へリダイレクトして「Googleログインに失敗しました。」という汎用メッセージのみ表示する（詳細な理由はサーバーログにのみ記録する）
+
 ## XP・レベル機能
 
 AGENTの「対応した実感」を可視化するための独自機能です。
@@ -229,6 +262,7 @@ experienceToNextLevel  = 100 - currentLevelExperience
 | Java 21 | 実行環境 |
 | Spring Boot 4.1.1 | REST API・DI |
 | Spring Security | 認証・認可・CSRF・セッション管理 |
+| Spring Security OAuth2 Client | Googleログイン（OAuth2 / OpenID Connect） |
 | Spring Data JPA | DBアクセス |
 | Flyway | DBマイグレーション |
 | Spring RestClient | Resend REST APIへのHTTP通信 |
@@ -351,6 +385,17 @@ Controller → Service → Repository → Databaseという責務分担を徹底
 - **DBトランザクションとの整合性**: セッション失効は`TransactionSynchronization`の`afterCommit`で実行し、DB更新がロールバックされた場合はセッションを失効させない
 - **userId基準の本人特定**: `AppUserDetails`の`equals`/`hashCode`をuserId基準にすることで、メールアドレス変更の前後でも同一ユーザーとして正しく識別する
 
+**外部ログイン（Google OAuth2 / OpenID Connect）**
+
+- **不変IDによる本人特定**: メールアドレスではなくGoogleの`sub`で本人を特定し、`oauth_accounts`テーブルで管理する
+- **email_verifiedの検証**: 初回ログイン時、確認済み（`email_verified=true`）のメールアドレスを取得できない場合はログインを拒否する
+- **既存アカウントへの自動連携なし**: 同じメールアドレスの既存アカウントが存在していても自動連携せず、安全側に倒してログインを拒否する
+- **ロールの固定**: Googleのclaimからロールを一切信用せず、新規作成ユーザーは常に`USER`ロール固定にする
+- **パスワードレス化への対応**: Google経由で作成したユーザーのpassword_hashにはSecureRandom生成のランダム値のBCryptハッシュを保存し、生の値はどこにも保存・ログ出力しない
+- **既存セッション管理との統合**: Googleログインのセッションも通常ログインと同じ`SessionAuthenticationStrategy`を適用し、`SessionRegistry`登録・全セッション失効の対象に含める
+- **失敗時の情報最小化**: 認証失敗時はスタックトレース・Googleのtoken・認可コードを返さず、汎用メッセージのみをフロントへ返す
+- **CSRF・Cookie設定は変更なし**: Googleログイン追加を理由にCSRF無効化やCookie設定の緩和は行っていない
+
 **認可**
 
 - **ロール別認可**: `@PreAuthorize`によるURL単位の制御に加えて、Service層でも「本人のチケットか」「自分が担当のチケットか」をIDで確認している
@@ -373,6 +418,7 @@ erDiagram
     USERS ||--o{ TICKETS : "assignee_id"
     USERS ||--o| PASSWORD_RESET_TOKENS : "user_id"
     USERS ||--o| EMAIL_CHANGE_REQUESTS : "user_id"
+    USERS ||--o{ OAUTH_ACCOUNTS : "user_id"
     USERS {
         bigint id PK
         varchar email
@@ -402,9 +448,15 @@ erDiagram
         varchar new_email
         varchar token_hash
     }
+    OAUTH_ACCOUNTS {
+        bigint id PK
+        bigint user_id FK
+        varchar provider
+        varchar provider_user_id
+    }
 ```
 
-図には関連・PK/FKと主要カラムのみを示しています。GitHub上のMermaidで確実に描画できるよう、UNIQUE制約などの詳細な制約は図から外しています。`email`（`users`・`pending_registrations`）・`token_hash`（`pending_registrations`・`password_reset_tokens`・`email_change_requests`）・`user_id`（`password_reset_tokens`・`email_change_requests`）・`new_email`（`email_change_requests`）にはいずれもUNIQUE制約があり、詳細は直後の表とマイグレーションファイルを参照してください。残りのカラム（`enabled`・`experience`・`priority`・`xp_awarded`・`family_name`・`given_name`・`middle_name`など）についても同様です。
+図には関連・PK/FKと主要カラムのみを示しています。GitHub上のMermaidで確実に描画できるよう、UNIQUE制約などの詳細な制約は図から外しています。`email`（`users`・`pending_registrations`）・`token_hash`（`pending_registrations`・`password_reset_tokens`・`email_change_requests`）・`user_id`（`password_reset_tokens`・`email_change_requests`）・`new_email`（`email_change_requests`）にはいずれもUNIQUE制約があり、`oauth_accounts`は`(provider, provider_user_id)`と`(user_id, provider)`の組み合わせにそれぞれUNIQUE制約を持ちます。詳細は直後の表とマイグレーションファイルを参照してください。残りのカラム（`enabled`・`experience`・`priority`・`xp_awarded`・`family_name`・`given_name`・`middle_name`・`created_at`など）についても同様です。
 
 | テーブル | 用途 |
 | --- | --- |
@@ -413,10 +465,11 @@ erDiagram
 | `pending_registrations` | メールアドレス確認待ちの仮登録データ（トークンハッシュ・有効期限を含む） |
 | `password_reset_tokens` | パスワード再設定用トークン（1ユーザー1件、`user_id`にUNIQUE制約） |
 | `email_change_requests` | メールアドレス変更申請（1ユーザー1件、`new_email`にもUNIQUE制約） |
+| `oauth_accounts` | 外部認証アカウントの紐付け（Google等。メールアドレスではなくprovider＋provider_user_idで本人特定） |
 
 `users`・`pending_registrations`は、氏名の入力形式（`name_format`）とその形式ごとの姓・名・ミドルネーム（`family_name`／`given_name`／`middle_name`）を追加で持ちます。これらの機能導入前から存在する行は`name_format='LEGACY'`となり、既存の`name`列がそのまま表示に使われます（`name`列自体は削除していません）。
 
-マイグレーションは次の7ファイルで管理しています。
+マイグレーションは次の8ファイルで管理しています。
 
 - `V1__create_users_table.sql`: usersテーブルの作成
 - `V2__create_tickets_table.sql`: ticketsテーブルの作成
@@ -425,6 +478,7 @@ erDiagram
 - `V5__create_password_reset_tokens_table.sql`: パスワード再設定トークンテーブルの作成
 - `V6__create_email_change_requests_table.sql`: メールアドレス変更申請テーブルの作成
 - `V7__add_structured_user_name_fields.sql`: 構造化された氏名項目の追加
+- `V8__create_oauth_accounts_table.sql`: Googleログイン用の外部認証アカウントテーブルの作成
 
 ## API概要
 
@@ -450,6 +504,8 @@ erDiagram
 | PATCH | `/api/tickets/{id}/status` | AGENT, ADMIN | ステータス更新（初回解決時にXP判定） |
 | PATCH | `/api/tickets/{id}/assignee` | ADMIN | 担当者の設定・解除 |
 | GET | `/api/admin/agents` | ADMIN | 担当AGENT候補一覧（ID・名前のみ） |
+| GET | `/oauth2/authorization/google` | 不要 | Googleログイン開始（Google認証画面へリダイレクト）※5 |
+| GET | `/login/oauth2/code/google` | 不要 | Googleからのコールバック（成功時はJSESSIONID発行、失敗時は`/login?oauthError=true`へ）※5 |
 
 補足（表内の※）:
 
@@ -457,6 +513,7 @@ erDiagram
 - ※2 所有者・担当者・ADMINのみアクセスできます
 - ※3 本人が発行したOPENチケットのみ編集できます
 - ※4 メール内リンクを別端末・未ログイン状態で開く可能性があるため認証不要としていますが、有効なトークンを知っている場合のみ処理が成功します
+- ※5 自前のControllerクラスは実装しておらず、Spring Security OAuth2 Clientが標準で提供するエンドポイントです
 - ログアウトは未ログイン状態で呼び出しても安全に処理されます
 
 ## ローカル環境での起動方法
@@ -477,6 +534,28 @@ cd backend
 ```
 
 追加の環境変数設定は不要です。デフォルトのSpringプロファイル（`local`）でH2のインメモリDBを使用するため、本番用のPostgreSQL接続情報（`DB_URL`など）はローカル起動には必要ありません。メール送信も行わず、確認用URLはログへ出力されます。起動後は `http://localhost:8080` でAPIへアクセスできます。
+
+**Googleログインを試す場合（任意）**
+
+`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`を設定しなくても、他の機能に影響なく起動できます（未設定時はダミー値が使われ、Googleログインボタンを押すとGoogle側に`invalid_client`で拒否されるだけです）。実際に試す場合は、[Google Cloud Console](https://console.cloud.google.com/)でOAuthクライアントIDを作成し、次を設定してください。
+
+- Authorized JavaScript origins: `http://localhost:5173`、`http://localhost:8080`
+- Authorized redirect URI: ローカル `http://localhost:8080/login/oauth2/code/google` ／ 本番 `https://chikecan.onrender.com/login/oauth2/code/google`
+
+発行されたクライアントID/シークレットは、**`mvnw`を実際に起動するのと同じターミナル・同じコマンド実行**で環境変数に設定してください（PowerShellの`$env:`はそのプロセスと子プロセスにしか伝わらないため、別ターミナルやIDEのRun/Debugボタンで設定すると反映されません）。
+
+```powershell
+$env:GOOGLE_CLIENT_ID = "発行されたクライアントID"
+$env:GOOGLE_CLIENT_SECRET = "発行されたクライアントシークレット"
+cd backend
+.\mvnw.cmd spring-boot:run
+```
+
+環境変数が実際にSpring Bootへ渡っているかは、値をログへ一切出さずに次のテストだけで確認できます（同じターミナルで実行してください）。
+
+```powershell
+.\mvnw.cmd test "-Dtest=OAuth2ClientPropertiesTest"
+```
 
 **フロントエンド**
 
@@ -507,7 +586,9 @@ VITE_API_BASE_URL=http://localhost:8080
 | `DB_PASSWORD` | PostgreSQL接続パスワード | `application-prod.properties` |
 | `RESEND_API_KEY` | Resend REST APIの認証キー | `application-prod.properties` |
 | `MAIL_FROM` | メール送信元アドレス | `application-prod.properties` |
-| `APP_BASE_URL` | 本番フロントエンドのURL（メール内リンクの組み立てに使用） | `application-prod.properties` |
+| `APP_BASE_URL` | 本番フロントエンドのURL（メール内リンク・Googleログイン成功後のリダイレクト先の組み立てに使用） | `application-prod.properties` |
+| `GOOGLE_CLIENT_ID` | GoogleログインのOAuthクライアントID | `application-prod.properties` |
+| `GOOGLE_CLIENT_SECRET` | GoogleログインのOAuthクライアントシークレット | `application-prod.properties` |
 | `VITE_API_BASE_URL` | バックエンドのベースURL（ローカル開発用） | `frontend/.env.example` |
 
 補足:
@@ -516,6 +597,7 @@ VITE_API_BASE_URL=http://localhost:8080
 - `SPRING_PROFILES_ACTIVE`を`prod`にすると、PostgreSQL接続・Cookieの`Secure`属性・Resendを使った実メール送信が有効になります
 - `DB_URL`・`DB_USERNAME`・`DB_PASSWORD`・`RESEND_API_KEY`・`MAIL_FROM`・`APP_BASE_URL`は`prod`プロファイル使用時のみ必要で、サンプルは`.env.example`にあります
 - ローカル開発（`local`プロファイル）ではメール送信を行わないため、Resend関連の環境変数は不要です
+- `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`は本番（`prod`プロファイル）では必須です。ローカル（`local`プロファイル）では未設定時に安全なダミー値へフォールバックするため必須ではなく、Googleログインを実際に試す場合のみ設定します（[ローカル環境での起動方法](#ローカル環境での起動方法)を参照）
 
 ## テスト
 
@@ -526,7 +608,7 @@ cd backend
 .\mvnw.cmd test
 ```
 
-本README更新時点で実行し、**358件全て成功**を確認しています。
+本README更新時点で実行し、**372件中370件成功**（環境変数`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`を設定した場合のみ実行される確認用テストが2件あり、未設定のローカル・CI環境ではその2件は失敗ではなく自動的にスキップされます）を確認しています。
 
 **フロントエンド**
 
@@ -537,11 +619,14 @@ npm run lint
 npm run build
 ```
 
-本README更新時点で実行し、テスト**250件全て成功**、lintエラーなし、ビルド成功を確認しています。
+本README更新時点で実行し、テスト**253件全て成功**、lintエラーなし、ビルド成功を確認しています。
 
 **主なテスト観点**
 
 - 認証・認可（未認証・ロール不足時のアクセス拒否、CSRF検証）
+- Googleログイン（初回ユーザー作成、同一sub再ログインで同一ユーザーとして扱われること、email_verified=false時の拒否、既存email衝突時に自動連携しないこと、roleが常にUSER固定であること、`oauth_accounts`のUNIQUE制約）
+- Googleでログインボタンの表示、クリック時のOAuth開始URLへの遷移、oauthError時のエラーメッセージ表示、既存フォームが残っていること
+- 環境変数`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`がSpringへ正しく反映されているかを、値そのものを出さずに確認する診断テスト
 - メールアドレス確認登録（仮登録の作成、トークン検証・期限切れ・再利用不可、正式登録への切り替え）
 - パスワード再設定（トークン発行・検証・期限切れ、アカウント列挙対策の応答一致）
 - メールアドレス変更（現在のパスワード確認、重複チェック、確定前後でのメールアドレス表示の切り替え）
@@ -581,6 +666,10 @@ npm run build
 - Render無料プランのSMTPポート制限を、SMTPからResendのHTTPS REST APIへ切り替えることで回避した設計判断
 - メールアドレス変更の重複防止を、Service層の事前チェックとDBのUNIQUE制約の二重構成にした設計
 - 姓名を構造化しつつ、LEGACYデータとの100%後方互換性を保った氏名モデル設計
+- 既存の`AppUserDetails`に`OidcUser`も実装させることで、Googleログインでも`@AuthenticationPrincipal AppUserDetails`など既存の認証済みAPI・`SessionRegistry`・全セッション失効の仕組みをそのまま使い回せるようにした設計
+- Google経由ユーザーのpassword_hashにSecureRandom生成値のBCryptハッシュを使うことで、DBスキーマ（NOT NULL制約）を変更せずに通常パスワードログインを実質的に無効化した設計
+- Googleログイン初回時、既存emailとの一致だけで自動連携せず安全側に倒したこと、Googleのclaimからロールを信用しない設計
+- 秘密情報の値そのものを出さずに、環境変数がSpringへ正しく反映されているかだけを確認できる診断テストの追加
 - フロントエンドの表示制御とバックエンドの`@PreAuthorize`・所有者確認による二重の認可
 - IDORを意識した、ID＋所有者IDを組み合わせたチケット取得
 - 一覧取得時のユーザー名一括解決によるN+1問題の回避
@@ -591,6 +680,9 @@ npm run build
 ## 今後の改善案
 
 - Resendの独自ドメイン検証による、任意の宛先へのメール送信対応
+- 本人確認済みフローでの、既存アカウントへのGoogleアカウント連携
+- Googleアカウントの連携解除画面
+- LINE・GitHubなど、他の外部ログインプロバイダの追加（`oauth_accounts`のprovider列を拡張するだけで対応できる設計）
 - アカウント設定画面からの氏名変更機能
 - CI（GitHub Actionsなど）での自動テスト実行
 - E2Eテストの追加

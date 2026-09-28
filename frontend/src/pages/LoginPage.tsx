@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ApiError } from '../api/client';
+import { ApiError, API_BASE_URL } from '../api/client';
 import { ErrorMessage } from '../components/ErrorMessage';
 
 interface LocationState {
@@ -10,11 +10,24 @@ interface LocationState {
   passwordChanged?: boolean;
 }
 
+/**
+ * Googleでログインボタン押下時の遷移先。fetchでは呼び出さず、ブラウザナビゲーションで
+ * Spring Security標準のOAuth2認可エンドポイントへ遷移させる(このパス自体がGoogleへの
+ * リダイレクトを引き起こす)。
+ */
+function startGoogleLogin() {
+  window.location.href = `${API_BASE_URL}/oauth2/authorization/google`;
+}
+
 export function LoginPage() {
   const { login } = useAuth();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const justRegistered = (location.state as LocationState | null)?.justRegistered ?? false;
   const passwordChanged = (location.state as LocationState | null)?.passwordChanged ?? false;
+  // Googleログイン失敗時、バックエンドが/login?oauthError=trueへリダイレクトする。
+  // 内部エラーの詳細は返ってこないため、ここでは固定の汎用メッセージのみ表示する。
+  const oauthError = searchParams.get('oauthError') === 'true';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -54,6 +67,7 @@ export function LoginPage() {
             パスワードを変更しました。再度ログインしてください。
           </p>
         )}
+        {oauthError && <ErrorMessage message="Googleログインに失敗しました。" />}
         <form onSubmit={handleSubmit} noValidate className="form">
           <div className="form-field">
             <label htmlFor="login-email">メールアドレス</label>
@@ -80,6 +94,12 @@ export function LoginPage() {
             {submitting ? 'ログイン中...' : 'ログイン'}
           </button>
         </form>
+        <div className="auth-divider" role="separator" aria-label="または">
+          <span>または</span>
+        </div>
+        <button type="button" className="btn btn--google" onClick={startGoogleLogin}>
+          Googleでログイン
+        </button>
         <p>
           <Link to="/forgot-password">パスワードを忘れた方</Link>
         </p>
