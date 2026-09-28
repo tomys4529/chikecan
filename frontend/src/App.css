@@ -201,9 +201,38 @@
   color: var(--color-text);
 }
 
+/* Google公式ロゴの完全再現はせず、Googleログインであることが分かる配色・表記に留める。 */
+.btn--google {
+  width: 100%;
+  background: #fff;
+  border-color: var(--color-border);
+  color: #3c4043;
+}
+
+.btn--google:hover:not(:disabled) {
+  background: #f7f7f7;
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 .form .btn {

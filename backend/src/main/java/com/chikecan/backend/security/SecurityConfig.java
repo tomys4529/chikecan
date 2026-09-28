@@ -53,9 +53,22 @@ public class SecurityConfig {
     this.logoutSuccessHandler = logoutSuccessHandler;
   }
 
+  /**
+   * ChikecanOidcUserService(→OAuthAccountService)はPasswordEncoderに依存しており、
+   * PasswordEncoderはこのSecurityConfig自身が@Beanとして定義している。そのため
+   * chikecanOidcUserService等をSecurityConfigのコンストラクタ(フィールド)へ注入すると、
+   * 「SecurityConfigの生成 → ChikecanOidcUserServiceの生成 → PasswordEncoderの生成には
+   * SecurityConfigの生成が必要」という循環参照になってしまう。この@Beanメソッドの
+   * パラメータとして受け取ることで、SecurityConfig自身の生成後(passwordEncoder()を
+   * 呼び出せる状態になった後)に解決されるようにし、循環を避けている。
+   */
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http, CsrfTokenRepository csrfTokenRepository,
-      SecurityContextRepository securityContextRepository, ConcurrentSessionFilter concurrentSessionFilter)
+      SecurityContextRepository securityContextRepository, ConcurrentSessionFilter concurrentSessionFilter,
+      SessionAuthenticationStrategy sessionAuthenticationStrategy,
+      ChikecanOidcUserService chikecanOidcUserService,
+      OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler,
+      OAuth2LoginFailureHandler oAuth2LoginFailureHandler)
       throws Exception {
     http
         .authorizeHttpRequests(auth -> auth
@@ -64,6 +77,9 @@ public class SecurityConfig {
                 "/api/auth/password-reset/request", "/api/auth/password-reset/confirm",
                 "/api/account/email-change/confirm")
             .permitAll()
+            // Googleログインの開始・コールバックエンドポイント。/api/**配下ではないため
+            // anyRequest().permitAll()でも結果的に許可されるが、意図を明示するために個別指定する。
+            .requestMatchers("/oauth2/**", "/login/oauth2/**").permitAll()
             .requestMatchers("/api/admin/**").hasRole("ADMIN")
             .requestMatchers("/api/agent/**").hasAnyRole("AGENT", "ADMIN")
             .requestMatchers("/api/**").authenticated()
@@ -82,6 +98,16 @@ public class SecurityConfig {
         .httpBasic(AbstractHttpConfigurer::disable)
         .formLogin(AbstractHttpConfigurer::disable)
         .securityContext(context -> context.securityContextRepository(securityContextRepository))
+        // 通常ログイン(AuthController)はsessionAuthenticationStrategyを手動で呼び出しているため
+        // この設定の影響を受けない。ここではSpring Securityが自ら構築するoauth2Loginの認証フィルターに、
+        // 通常ログインと同じ戦略(セッション固定攻撃対策+SessionRegistry登録+CSRFトークン再発行)を
+        // 適用させるためだけに設定する。これが無いと、Googleログインのセッションが
+        // SessionRegistryへ登録されず、パスワード変更後の全セッション失効の対象から漏れてしまう。
+        .sessionManagement(session -> session.sessionAuthenticationStrategy(sessionAuthenticationStrategy))
+        .oauth2Login(oauth2 -> oauth2
+            .userInfoEndpoint(userInfo -> userInfo.oidcUserService(chikecanOidcUserService))
+            .successHandler(oAuth2LoginSuccessHandler)
+            .failureHandler(oAuth2LoginFailureHandler))
         .logout(logout -> logout
             .logoutUrl("/api/auth/logout")
             .logoutSuccessHandler(logoutSuccessHandler)

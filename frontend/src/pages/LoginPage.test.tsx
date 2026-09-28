@@ -125,4 +125,66 @@ describe('LoginPage', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
     expect(screen.getByRole('link', { name: 'パスワードを忘れた方' })).toHaveAttribute('href', '/forgot-password');
   });
+
+  it('Googleでログインボタンをクリックするとfetchを呼ばずOAuth開始URLへブラウザ遷移する', async () => {
+    setupInitialUnauthenticated();
+    const originalLocation = window.location;
+    // fetchではなくブラウザナビゲーションで遷移することを確認するため、window.locationを置き換える。
+    Reflect.deleteProperty(window, 'location');
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, href: '' },
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
+    const fetchCallsBeforeClick = vi.mocked(fetch).mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Googleでログイン' }));
+
+    expect(window.location.href).toBe('/oauth2/authorization/google');
+    expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBeforeClick);
+
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+  });
+
+  it('oauthError=trueの場合はGoogleログイン失敗のエラーメッセージを表示する', async () => {
+    setupInitialUnauthenticated();
+
+    render(
+      <MemoryRouter initialEntries={['/login?oauthError=true']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Googleログインに失敗しました。');
+  });
+
+  it('既存のメール＋パスワードログインフォームがGoogleボタン追加後も残っている', async () => {
+    setupInitialUnauthenticated();
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <LoginPage />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled());
+    expect(screen.getByLabelText('メールアドレス')).toBeInTheDocument();
+    expect(screen.getByLabelText('パスワード')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ログイン' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Googleでログイン' })).toBeInTheDocument();
+  });
 });
